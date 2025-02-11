@@ -1,0 +1,16 @@
+[package]
+name = "art-of-rally-leaderboard-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+color-eyre = "0.6.3"
+curl = "0.4.47"
+serde = "1.0.217"
+serde_json = "1.0.138"
+
+[dependencies.art-of-rally-leaderboard-api]
+git = "https://github.com/sornas/art-of-rally-leaderboard-api"
+branch = "enum-iter"
+version = "0.1.0"
+features = ["enum-iter"]
