@@ -1,4 +1,4 @@
-use std::mem;
+use std::{collections::HashMap, mem};
 
 use art_of_rally_leaderboard_api::{
     Area, Direction, Filter, Group, IntoEnumIterator as _, Leaderboard, Platform, Response, Weather,
@@ -8,6 +8,7 @@ use curl::{
     easy::{Easy2, Handler, WriteError},
     multi::{Easy2Handle, Multi},
 };
+use itertools::Itertools;
 use serde::Deserialize;
 
 struct Collector(Vec<u8>);
@@ -31,14 +32,17 @@ fn download(multi: &mut Multi, token: usize, url: &str) -> Result<Easy2Handle<Co
 
 fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     urls: &[impl AsRef<str>],
-) -> Result<Vec<Option<T>>> {
+) -> Result<Vec<Option<Result<T>>>> {
     let mut multi = Multi::new();
     let mut handles = urls
         .iter()
         .enumerate()
         .map(|(token, url)| download(&mut multi, token, url.as_ref()))
         .collect::<Result<Vec<_>>>()?;
-    let mut responses = vec![Option::None; handles.len()];
+    let mut responses = Vec::new();
+    for _ in 0..handles.len() {
+        responses.push(Option::None);
+    }
 
     let mut running = true;
     while running {
@@ -59,10 +63,10 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
                     );
                     let s = String::from_utf8(mem::take(&mut handle.get_mut().0)).unwrap();
                     let resp = serde_json::from_str(&s).unwrap();
-                    responses[token] = Some(resp);
+                    responses[token] = Some(Ok(resp));
                 }
                 Err(e) => {
-                    eprintln!("error: {} - <{}>", e, urls[token].as_ref());
+                    responses[token] = Some(Err(e.into()));
                 }
             }
         });
@@ -74,22 +78,51 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
 fn main() -> Result<()> {
     color_eyre::install().unwrap();
 
+    let direction = Direction::Forward;
+    let weather = Weather::Dry;
+
+    // iter all pairs of (area, group) and look for ones where at least one person has driven all of them
+
+    let users = [76561198230518420, 76561198087789780, 76561198062269100];
+    let user_idx: HashMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("gurka2", 2)]
+        .into_iter()
+        .collect();
+
+    let combinations = [(Area::Finland, Group::GroupA)];
     let urls: Vec<_> = (1..=6)
-        .map(|stage| {
+        .cartesian_product(combinations.iter())
+        .map(|(stage, (area, group))| {
             (Leaderboard {
-                area: Area::Finland,
+                area: *area,
+                direction,
+                weather,
                 stage,
-                direction: Direction::Forward,
-                weather: Weather::Dry,
-                group: Group::GroupA,
+                group: *group,
                 filter: Filter::Friends,
                 platform: Platform::Steam,
             })
-            .as_url(76561198230518420, &[76561198087789780, 76561198062269100])
+            .as_url(users[0], &users[1..])
         })
         .collect();
 
-    dbg!(&download_all::<Response>(&urls));
+    // Area::iter().cartesian_product(Group::iter())
+
+    let mut rallys: HashMap<(Area, Group), [[Option<usize>; 6]; 3]> = HashMap::new();
+    for (area, group) in &combinations {
+        rallys.insert((*area, *group), [[None; 6], [None; 6], [None; 6]]);
+    }
+
+    let responses = download_all::<Response>(&urls)?;
+    for r in &responses {
+        let r = r.as_ref().unwrap().as_ref().unwrap();
+        let l = &r.leaderboard;
+        for (e, entry) in l.iter().enumerate() {
+            let idx = user_idx[entry.user_name.as_str()];
+            rallys.get_mut(&(*area, *group)).unwrap()[idx][e] = Some(entry.score);
+        }
+    }
+
+    dbg!(&rallys);
 
     Ok(())
 }
