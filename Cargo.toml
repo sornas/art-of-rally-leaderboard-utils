@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 color-eyre = "0.6.3"
+comfy-table = { version = "7.1.4", default-features = false }
 curl = "0.4.47"
 itertools = "0.14.0"
 serde = "1.0.217"

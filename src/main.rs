@@ -1,12 +1,10 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    mem,
-};
+use std::{collections::BTreeMap, mem};
 
 use art_of_rally_leaderboard_api::{
     Area, Direction, Filter, Group, IntoEnumIterator as _, Leaderboard, Platform, Response, Weather,
 };
 use color_eyre::Result;
+use comfy_table::{CellAlignment, Table};
 use curl::{
     easy::{Easy2, Handler, WriteError},
     multi::{Easy2Handle, Multi},
@@ -22,6 +20,7 @@ impl Handler for Collector {
     }
 }
 
+/// Start a request on a [Multi] handle.
 fn download(multi: &mut Multi, token: usize, url: &str) -> Result<Easy2Handle<Collector>> {
     let version = curl::Version::get();
     let mut request = Easy2::new(Collector(Vec::new()));
@@ -33,6 +32,7 @@ fn download(multi: &mut Multi, token: usize, url: &str) -> Result<Easy2Handle<Co
     Ok(handle)
 }
 
+/// Download and JSON-parse the results for some URLs.
 fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     urls: &[impl AsRef<str>],
 ) -> Result<Vec<Option<Result<T>>>> {
@@ -57,13 +57,8 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
             let handle = handles.get_mut(token).unwrap();
             match m.result_for2(handle).unwrap() {
                 Ok(()) => {
-                    let status = handle.response_code().unwrap();
-                    println!(
-                        "transfer succeeded (status: {}) {} (download length: {})",
-                        status,
-                        urls[token].as_ref(),
-                        handle.get_ref().0.len()
-                    );
+                    let _status = handle.response_code().unwrap();
+                    // TODO: report download progress
                     let s = String::from_utf8(mem::take(&mut handle.get_mut().0)).unwrap();
                     let resp = serde_json::from_str(&s).unwrap();
                     responses[token] = Some(Ok(resp));
@@ -87,7 +82,7 @@ fn main() -> Result<()> {
     // iter all pairs of (area, group) and look for ones where at least one person has driven all of them
 
     let users = [76561198230518420, 76561198087789780, 76561198062269100];
-    let user_idx: BTreeMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
+    let name_to_idx: BTreeMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
         .into_iter()
         .collect();
 
@@ -120,15 +115,85 @@ fn main() -> Result<()> {
         let response = response.as_ref().unwrap().as_ref().unwrap();
         let entries = &response.leaderboard;
         for entry in entries.iter() {
-            dbg!(&entry.user_name);
-            let user = user_idx[entry.user_name.as_str()];
+            let user = name_to_idx[entry.user_name.as_str()];
             rallys.get_mut(&(*area, *group)).unwrap()[user][stage] = Some(entry.score);
         }
     }
 
-    for (area, group) in &combinations {
-        dbg!(rallys[&(*area, *group)]);
+    for ((area, group), users) in &rallys {
+        let mut fulltimes = Vec::new();
+        let mut partialtimes = Vec::new();
+        let mut nonetimes = Vec::new();
+        for (user_name, user_idx) in &name_to_idx {
+            let times = &users[*user_idx];
+            let total_time: usize = times.iter().flatten().sum();
+            let finished = times.iter().copied().filter(Option::is_some).count();
+            let is_full = finished == times.len();
+            let is_none = finished == 0;
+            if is_full {
+                fulltimes.push((
+                    total_time,
+                    user_name,
+                    times
+                        .iter()
+                        .cloned()
+                        .map(Option::unwrap)
+                        .collect::<Vec<_>>(),
+                ));
+            } else if is_none {
+                nonetimes.push(user_name);
+            } else {
+                partialtimes.push((finished, total_time, user_name, times));
+            }
+        }
+        let mut table = Table::new();
+        table.load_preset(comfy_table::presets::ASCII_BORDERS_ONLY_CONDENSED);
+        // TODO: names of stages
+        table.set_header(vec![
+            "user", "total", "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6",
+        ]);
+        table
+            .column_mut(1)
+            .unwrap()
+            .set_cell_alignment(CellAlignment::Right);
+        fulltimes.sort();
+        // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
+        partialtimes.sort_by(|(finished1, time1, _, _), (finished2, time2, _, _)| {
+            finished2.cmp(finished1).then(time1.cmp(time2))
+        });
+        for (total_time, name, times) in &fulltimes {
+            let mut row = vec![name.to_string(), format_time(*total_time, true)];
+            row.extend(times.iter().map(|t| format_time(*t, false)));
+            table.add_row(row);
+        }
+        for (_, total_time, name, times) in &partialtimes {
+            let mut row = vec![
+                name.to_string(),
+                format!("* {}", format_time(*total_time, true)),
+            ];
+            row.extend(times.iter().map(|t| match t {
+                Some(t) => format_time(*t, false),
+                None => "-".to_string(),
+            }));
+            table.add_row(row);
+        }
+        for name in &nonetimes {
+            table.add_row(vec![name.to_string(), "-".to_string()]);
+        }
+        println!("{:?} ({:?})", area, group);
+        println!("{table}");
     }
 
     Ok(())
+}
+
+fn format_time(ms: usize, long: bool) -> String {
+    let minutes = ms / 1000 / 60;
+    let seconds = (ms / 1000) % 60;
+    let millis = ms % 1000;
+    if long {
+        format!("{minutes:02}:{seconds:02}.{millis:03}")
+    } else {
+        format!("{minutes:01}:{seconds:02}.{millis:03}")
+    }
 }
