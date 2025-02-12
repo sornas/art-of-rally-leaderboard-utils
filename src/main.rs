@@ -1,4 +1,7 @@
-use std::{collections::HashMap, mem};
+use std::{
+    collections::{BTreeMap, HashMap},
+    mem,
+};
 
 use art_of_rally_leaderboard_api::{
     Area, Direction, Filter, Group, IntoEnumIterator as _, Leaderboard, Platform, Response, Weather,
@@ -84,13 +87,15 @@ fn main() -> Result<()> {
     // iter all pairs of (area, group) and look for ones where at least one person has driven all of them
 
     let users = [76561198230518420, 76561198087789780, 76561198062269100];
-    let user_idx: HashMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("gurka2", 2)]
+    let user_idx: BTreeMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
         .into_iter()
         .collect();
 
-    let combinations = [(Area::Finland, Group::GroupA)];
-    let urls: Vec<_> = (1..=6)
-        .cartesian_product(combinations.iter())
+    // Area::iter().cartesian_product(Group::iter())
+    let combinations = [(Area::Kenya, Group::GroupB)];
+    let leaderboards = (1..=6).cartesian_product(combinations.iter());
+    let urls: Vec<_> = leaderboards
+        .clone()
         .map(|(stage, (area, group))| {
             (Leaderboard {
                 area: *area,
@@ -105,24 +110,25 @@ fn main() -> Result<()> {
         })
         .collect();
 
-    // Area::iter().cartesian_product(Group::iter())
-
-    let mut rallys: HashMap<(Area, Group), [[Option<usize>; 6]; 3]> = HashMap::new();
+    let mut rallys: BTreeMap<(Area, Group), [[Option<usize>; 6]; 3]> = BTreeMap::new();
     for (area, group) in &combinations {
         rallys.insert((*area, *group), [[None; 6], [None; 6], [None; 6]]);
     }
 
     let responses = download_all::<Response>(&urls)?;
-    for r in &responses {
-        let r = r.as_ref().unwrap().as_ref().unwrap();
-        let l = &r.leaderboard;
-        for (e, entry) in l.iter().enumerate() {
-            let idx = user_idx[entry.user_name.as_str()];
-            rallys.get_mut(&(*area, *group)).unwrap()[idx][e] = Some(entry.score);
+    for ((stage, (area, group)), response) in leaderboards.zip(responses.iter()) {
+        let response = response.as_ref().unwrap().as_ref().unwrap();
+        let entries = &response.leaderboard;
+        for entry in entries.iter() {
+            dbg!(&entry.user_name);
+            let user = user_idx[entry.user_name.as_str()];
+            rallys.get_mut(&(*area, *group)).unwrap()[user][stage] = Some(entry.score);
         }
     }
 
-    dbg!(&rallys);
+    for (area, group) in &combinations {
+        dbg!(rallys[&(*area, *group)]);
+    }
 
     Ok(())
 }
