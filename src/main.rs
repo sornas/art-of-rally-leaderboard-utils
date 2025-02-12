@@ -202,16 +202,16 @@ fn main() -> Result<()> {
     // generate API URLs for each leaderboard and download the leaderboards
 
     // let combinations = Area::iter().cartesian_product(Group::iter());
-    let leaderboards = (1..=6).cartesian_product(combinations.iter());
+    let leaderboards = (1..=6).cartesian_product(combinations);
     let urls: Vec<_> = leaderboards
         .clone()
         .map(|(stage, (area, group))| {
             (Leaderboard {
-                area: *area,
+                area,
                 direction,
                 weather,
                 stage,
-                group: *group,
+                group,
                 filter: Filter::Friends,
                 platform: Platform::Steam,
             })
@@ -232,7 +232,7 @@ fn main() -> Result<()> {
         let entries = &response.leaderboard;
         for entry in entries.iter() {
             let user = name_to_idx[entry.user_name.as_str()];
-            rallys.get_mut(&(*area, *group)).unwrap()[user][stage] = Some(entry.score);
+            rallys.get_mut(&(area, group)).unwrap()[user][stage] = Some(entry.score);
         }
     }
 
