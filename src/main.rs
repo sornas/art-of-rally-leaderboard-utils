@@ -157,10 +157,24 @@ fn main() -> Result<()> {
             finished2.cmp(finished1).then(time1.cmp(time2))
         });
 
+        let fastest_total = fulltimes.iter().map(|(t, _, _)| *t).max();
+        let mut fastest_per_stage = [Option::<usize>::None; 6];
+        for times in users {
+            for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
+                let time = time.as_ref().map(|u| *u);
+                let fastest_ = fastest.as_ref().map(|u| *u);
+                match (time, fastest_) {
+                    (Some(t), None) => *fastest = Some(t),
+                    (Some(t), Some(cur)) => *fastest = Some(cur.min(t)),
+                    (None, _) => {}
+                }
+            }
+        }
+
         // generate text table
 
         let mut table = Table::new();
-        table.load_preset(comfy_table::presets::ASCII_BORDERS_ONLY_CONDENSED);
+        table.load_preset(comfy_table::presets::ASCII_HORIZONTAL_ONLY);
         // TODO: names of stages
         table.set_header(vec![
             "user", "total", "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6",
@@ -169,7 +183,14 @@ fn main() -> Result<()> {
             column.set_cell_alignment(CellAlignment::Right);
         }
         for (total_time, name, times) in &fulltimes {
-            let mut row = vec![name.to_string(), format_time(*total_time, true)];
+            let mut row = vec![
+                name.to_string(),
+                format!(
+                    "{}\n{}",
+                    format_time(*total_time, true),
+                    format_delta(*total_time, fastest_total.unwrap(), true)
+                ),
+            ];
             row.extend(times.iter().map(|t| format_time(*t, false)));
             table.add_row(row);
         }
@@ -178,8 +199,12 @@ fn main() -> Result<()> {
                 name.to_string(),
                 format!("* {}", format_time(*total_time, true)),
             ];
-            row.extend(times.iter().map(|t| match t {
-                Some(t) => format_time(*t, false),
+            row.extend(times.iter().enumerate().map(|(i, t)| match t {
+                Some(t) => format!(
+                    "{}\n{}",
+                    format_time(*t, false),
+                    format_delta(*t, fastest_per_stage[i].unwrap(), false)
+                ),
                 None => "-".to_string(),
             }));
             table.add_row(row);
@@ -204,5 +229,14 @@ fn format_time(ms: usize, long: bool) -> String {
         format!("{minutes:02}:{seconds:02}.{millis:03}")
     } else {
         format!("{minutes:01}:{seconds:02}.{millis:03}")
+    }
+}
+
+fn format_delta(ms: usize, fast: usize, long: bool) -> String {
+    assert!(ms >= fast);
+    if ms == fast {
+        "         ".to_string()
+    } else {
+        format!("+{}", format_time(ms - fast, long))
     }
 }
