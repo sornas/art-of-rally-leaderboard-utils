@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::mem;
 
 use art_of_rally_leaderboard_api::{
-    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Weather,
+    Area, Direction, Filter, Group, IntoEnumIterator as _, Leaderboard, Platform, Response, Weather,
 };
 use color_eyre::Result;
 use comfy_table::{CellAlignment, Table};
@@ -193,6 +193,8 @@ fn main() -> Result<()> {
     let direction = Direction::Forward;
     let weather = Weather::Dry;
     let combinations = [(Area::Kenya, Group::GroupB)];
+    // let combinations = Area::iter().cartesian_product(Group::iter());
+    // TODO: when running for all combinations, instead print just the number of stages completed per driver
 
     let users = [76561198230518420, 76561198087789780, 76561198062269100];
     let name_to_idx: BTreeMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
@@ -201,8 +203,7 @@ fn main() -> Result<()> {
 
     // generate API URLs for each leaderboard and download the leaderboards
 
-    // let combinations = Area::iter().cartesian_product(Group::iter());
-    let leaderboards = (1..=6).cartesian_product(combinations);
+    let leaderboards = (1..=6).cartesian_product(combinations.clone());
     let urls: Vec<_> = leaderboards
         .clone()
         .map(|(stage, (area, group))| {
@@ -223,8 +224,8 @@ fn main() -> Result<()> {
     // collect the responses
 
     let mut rallys: BTreeMap<(Area, Group), [[Option<usize>; 6]; 3]> = BTreeMap::new();
-    for (area, group) in &combinations {
-        rallys.insert((*area, *group), [[None; 6], [None; 6], [None; 6]]);
+    for (area, group) in combinations {
+        rallys.insert((area, group), [[None; 6], [None; 6], [None; 6]]);
     }
 
     for ((stage, (area, group)), response) in leaderboards.zip(responses.iter()) {
@@ -232,7 +233,7 @@ fn main() -> Result<()> {
         let entries = &response.leaderboard;
         for entry in entries.iter() {
             let user = name_to_idx[entry.user_name.as_str()];
-            rallys.get_mut(&(area, group)).unwrap()[user][stage] = Some(entry.score);
+            rallys.get_mut(&(area, group)).unwrap()[user][stage - 1] = Some(entry.score);
         }
     }
 
@@ -245,6 +246,7 @@ fn main() -> Result<()> {
 
         // generate text table
 
+        println!();
         println!("{:?} ({:?})", area, group);
         text_table(
             &full_times,
