@@ -1,7 +1,8 @@
-use std::{collections::BTreeMap, mem};
+use std::collections::BTreeMap;
+use std::mem;
 
 use art_of_rally_leaderboard_api::{
-    Area, Direction, Filter, Group, IntoEnumIterator as _, Leaderboard, Platform, Response, Weather,
+    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Weather,
 };
 use color_eyre::Result;
 use comfy_table::{CellAlignment, Table};
@@ -73,6 +74,119 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     Ok(responses)
 }
 
+type FullTime<'s> = (usize, &'s str, [usize; 6]);
+type PartialTime<'a> = (usize, usize, &'a str, [Option<usize>; 6]);
+
+fn split_times<'s>(
+    users: &[[Option<usize>; 6]; 3],
+    name_to_idx: &BTreeMap<&'s str, usize>,
+) -> (Vec<FullTime<'s>>, Vec<PartialTime<'s>>, Vec<&'s str>) {
+    let mut full_times = Vec::new();
+    let mut partial_times = Vec::new();
+    let mut none_times = Vec::new();
+    for (user_name, user_idx) in name_to_idx {
+        let times = &users[*user_idx];
+        let total_time: usize = times.iter().flatten().sum();
+        let finished = times.iter().copied().filter(Option::is_some).count();
+        let is_full = finished == times.len();
+        let is_none = finished == 0;
+        if is_full {
+            full_times.push((
+                total_time,
+                *user_name,
+                times
+                    .iter()
+                    .cloned()
+                    .map(Option::unwrap)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap(),
+            ));
+        } else if is_none {
+            none_times.push(*user_name);
+        } else {
+            partial_times.push((finished, total_time, *user_name, *times));
+        }
+    }
+    full_times.sort();
+    // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
+    partial_times.sort_by(|(finished1, time1, _, _), (finished2, time2, _, _)| {
+        finished2.cmp(finished1).then(time1.cmp(time2))
+    });
+    (full_times, partial_times, none_times)
+}
+
+fn fastest_times(
+    full_times: &[FullTime],
+    users: &[[Option<usize>; 6]; 3],
+) -> (Option<usize>, [Option<usize>; 6]) {
+    let fastest_total = full_times.iter().map(|(t, _, _)| *t).max();
+    let mut fastest_per_stage = [Option::<usize>::None; 6];
+    for times in users {
+        for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
+            let time = time.as_ref().map(|u| *u);
+            let fastest_ = fastest.as_ref().map(|u| *u);
+            match (time, fastest_) {
+                (Some(t), None) => *fastest = Some(t),
+                (Some(t), Some(cur)) => *fastest = Some(cur.min(t)),
+                (None, _) => {}
+            }
+        }
+    }
+    (fastest_total, fastest_per_stage)
+}
+
+fn text_table(
+    full_times: &[FullTime],
+    partial_times: &[PartialTime],
+    none_times: &[&str],
+    fastest_total: Option<usize>,
+    fastest_stages: [Option<usize>; 6],
+) {
+    let mut table = Table::new();
+    table.load_preset(comfy_table::presets::ASCII_HORIZONTAL_ONLY);
+    // TODO: names of stages
+    table.set_header(vec![
+        "user", "total", "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6",
+    ]);
+    for column in table.column_iter_mut().skip(1) {
+        column.set_cell_alignment(CellAlignment::Right);
+    }
+    for (total_time, name, times) in full_times {
+        let mut row = vec![
+            name.to_string(),
+            format!(
+                "{}\n{}",
+                format_time(*total_time, true),
+                format_delta(*total_time, fastest_total.unwrap(), true)
+            ),
+        ];
+        row.extend(times.iter().map(|t| format_time(*t, false)));
+        table.add_row(row);
+    }
+    for (_, total_time, name, times) in partial_times {
+        let mut row = vec![
+            name.to_string(),
+            format!("* {}", format_time(*total_time, true)),
+        ];
+        row.extend(times.iter().enumerate().map(|(i, t)| match t {
+            Some(t) => format!(
+                "{}\n{}",
+                format_time(*t, false),
+                format_delta(*t, fastest_stages[i].unwrap(), false)
+            ),
+            None => "-".to_string(),
+        }));
+        table.add_row(row);
+    }
+    for name in none_times {
+        let mut row = vec![name.to_string()];
+        row.extend(std::iter::repeat("-".to_string()).take(7));
+        table.add_row(row);
+    }
+    println!("{table}");
+}
+
 fn main() -> Result<()> {
     color_eyre::install().unwrap();
 
@@ -126,96 +240,19 @@ fn main() -> Result<()> {
     // how many stages have been run by each driver
 
     for ((area, group), users) in &rallys {
-        let mut fulltimes = Vec::new();
-        let mut partialtimes = Vec::new();
-        let mut nonetimes = Vec::new();
-        for (user_name, user_idx) in &name_to_idx {
-            let times = &users[*user_idx];
-            let total_time: usize = times.iter().flatten().sum();
-            let finished = times.iter().copied().filter(Option::is_some).count();
-            let is_full = finished == times.len();
-            let is_none = finished == 0;
-            if is_full {
-                fulltimes.push((
-                    total_time,
-                    user_name,
-                    times
-                        .iter()
-                        .cloned()
-                        .map(Option::unwrap)
-                        .collect::<Vec<_>>(),
-                ));
-            } else if is_none {
-                nonetimes.push(user_name);
-            } else {
-                partialtimes.push((finished, total_time, user_name, times));
-            }
-        }
-        fulltimes.sort();
-        // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
-        partialtimes.sort_by(|(finished1, time1, _, _), (finished2, time2, _, _)| {
-            finished2.cmp(finished1).then(time1.cmp(time2))
-        });
-
-        let fastest_total = fulltimes.iter().map(|(t, _, _)| *t).max();
-        let mut fastest_per_stage = [Option::<usize>::None; 6];
-        for times in users {
-            for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
-                let time = time.as_ref().map(|u| *u);
-                let fastest_ = fastest.as_ref().map(|u| *u);
-                match (time, fastest_) {
-                    (Some(t), None) => *fastest = Some(t),
-                    (Some(t), Some(cur)) => *fastest = Some(cur.min(t)),
-                    (None, _) => {}
-                }
-            }
-        }
+        let (full_times, partial_times, none_times) = split_times(users, &name_to_idx);
+        let (fastest_total, fastest_per_stage) = fastest_times(&full_times, users);
 
         // generate text table
 
-        let mut table = Table::new();
-        table.load_preset(comfy_table::presets::ASCII_HORIZONTAL_ONLY);
-        // TODO: names of stages
-        table.set_header(vec![
-            "user", "total", "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6",
-        ]);
-        for column in table.column_iter_mut().skip(1) {
-            column.set_cell_alignment(CellAlignment::Right);
-        }
-        for (total_time, name, times) in &fulltimes {
-            let mut row = vec![
-                name.to_string(),
-                format!(
-                    "{}\n{}",
-                    format_time(*total_time, true),
-                    format_delta(*total_time, fastest_total.unwrap(), true)
-                ),
-            ];
-            row.extend(times.iter().map(|t| format_time(*t, false)));
-            table.add_row(row);
-        }
-        for (_, total_time, name, times) in &partialtimes {
-            let mut row = vec![
-                name.to_string(),
-                format!("* {}", format_time(*total_time, true)),
-            ];
-            row.extend(times.iter().enumerate().map(|(i, t)| match t {
-                Some(t) => format!(
-                    "{}\n{}",
-                    format_time(*t, false),
-                    format_delta(*t, fastest_per_stage[i].unwrap(), false)
-                ),
-                None => "-".to_string(),
-            }));
-            table.add_row(row);
-        }
-        for name in &nonetimes {
-            let mut row = vec![name.to_string()];
-            row.extend(std::iter::repeat("-".to_string()).take(7));
-            table.add_row(row);
-        }
         println!("{:?} ({:?})", area, group);
-        println!("{table}");
+        text_table(
+            &full_times,
+            &partial_times,
+            &none_times,
+            fastest_total,
+            fastest_per_stage,
+        );
     }
 
     Ok(())
