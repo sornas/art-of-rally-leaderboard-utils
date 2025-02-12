@@ -78,16 +78,16 @@ fn main() -> Result<()> {
 
     let direction = Direction::Forward;
     let weather = Weather::Dry;
-
-    // iter all pairs of (area, group) and look for ones where at least one person has driven all of them
+    let combinations = [(Area::Kenya, Group::GroupB)];
 
     let users = [76561198230518420, 76561198087789780, 76561198062269100];
     let name_to_idx: BTreeMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
         .into_iter()
         .collect();
 
-    // Area::iter().cartesian_product(Group::iter())
-    let combinations = [(Area::Kenya, Group::GroupB)];
+    // generate API URLs for each leaderboard and download the leaderboards
+
+    // let combinations = Area::iter().cartesian_product(Group::iter());
     let leaderboards = (1..=6).cartesian_product(combinations.iter());
     let urls: Vec<_> = leaderboards
         .clone()
@@ -104,13 +104,15 @@ fn main() -> Result<()> {
             .as_url(users[0], &users[1..])
         })
         .collect();
+    let responses = download_all::<Response>(&urls)?;
+
+    // collect the responses
 
     let mut rallys: BTreeMap<(Area, Group), [[Option<usize>; 6]; 3]> = BTreeMap::new();
     for (area, group) in &combinations {
         rallys.insert((*area, *group), [[None; 6], [None; 6], [None; 6]]);
     }
 
-    let responses = download_all::<Response>(&urls)?;
     for ((stage, (area, group)), response) in leaderboards.zip(responses.iter()) {
         let response = response.as_ref().unwrap().as_ref().unwrap();
         let entries = &response.leaderboard;
@@ -119,6 +121,9 @@ fn main() -> Result<()> {
             rallys.get_mut(&(*area, *group)).unwrap()[user][stage] = Some(entry.score);
         }
     }
+
+    // prepare table data: time in total and time per stage, split depending on
+    // how many stages have been run by each driver
 
     for ((area, group), users) in &rallys {
         let mut fulltimes = Vec::new();
@@ -146,6 +151,14 @@ fn main() -> Result<()> {
                 partialtimes.push((finished, total_time, user_name, times));
             }
         }
+        fulltimes.sort();
+        // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
+        partialtimes.sort_by(|(finished1, time1, _, _), (finished2, time2, _, _)| {
+            finished2.cmp(finished1).then(time1.cmp(time2))
+        });
+
+        // generate text table
+
         let mut table = Table::new();
         table.load_preset(comfy_table::presets::ASCII_BORDERS_ONLY_CONDENSED);
         // TODO: names of stages
@@ -155,11 +168,6 @@ fn main() -> Result<()> {
         for column in table.column_iter_mut().skip(1) {
             column.set_cell_alignment(CellAlignment::Right);
         }
-        fulltimes.sort();
-        // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
-        partialtimes.sort_by(|(finished1, time1, _, _), (finished2, time2, _, _)| {
-            finished2.cmp(finished1).then(time1.cmp(time2))
-        });
         for (total_time, name, times) in &fulltimes {
             let mut row = vec![name.to_string(), format_time(*total_time, true)];
             row.extend(times.iter().map(|t| format_time(*t, false)));
