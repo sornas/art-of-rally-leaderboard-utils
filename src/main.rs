@@ -152,10 +152,9 @@ fn main() -> Result<()> {
         table.set_header(vec![
             "user", "total", "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6",
         ]);
-        table
-            .column_mut(1)
-            .unwrap()
-            .set_cell_alignment(CellAlignment::Right);
+        for column in table.column_iter_mut().skip(1) {
+            column.set_cell_alignment(CellAlignment::Right);
+        }
         fulltimes.sort();
         // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
         partialtimes.sort_by(|(finished1, time1, _, _), (finished2, time2, _, _)| {
@@ -178,7 +177,9 @@ fn main() -> Result<()> {
             table.add_row(row);
         }
         for name in &nonetimes {
-            table.add_row(vec![name.to_string(), "-".to_string()]);
+            let mut row = vec![name.to_string()];
+            row.extend(std::iter::repeat("-".to_string()).take(7));
+            table.add_row(row);
         }
         println!("{:?} ({:?})", area, group);
         println!("{table}");
