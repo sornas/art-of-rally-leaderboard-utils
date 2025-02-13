@@ -1,9 +1,96 @@
 use std::collections::BTreeMap;
 
-use art_of_rally_leaderboard_api::{Area, Direction, Group, Stage};
+use art_of_rally_leaderboard_api::{
+    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Stage, Weather,
+};
+use art_of_rally_leaderboard_utils::{
+    download_all, fastest_times, split_times, FullTime, PartialTime,
+};
 use comfy_table::{CellAlignment, Table};
+use itertools::Itertools;
+use snafu::Whatever;
 
-use crate::{split_times, FullTime, PartialTime};
+fn main() -> Result<(), Whatever> {
+    let direction = Direction::Forward;
+    let weather = Weather::Dry;
+    let combinations = [(Area::Kenya, Group::GroupB)];
+    // let combinations = Area::iter().cartesian_product(Group::iter());
+
+    let users = [76561198230518420, 76561198087789780, 76561198062269100];
+    let name_to_idx: BTreeMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
+        .into_iter()
+        .collect();
+
+    // generate API URLs for each leaderboard and download the leaderboards
+
+    let leaderboards =
+        (1..=6)
+            .cartesian_product(combinations.clone())
+            .map(|(stage_number, (area, group))| {
+                (
+                    Stage {
+                        area,
+                        stage_number,
+                        direction,
+                    },
+                    group,
+                )
+            });
+    let urls: Vec<_> = leaderboards
+        .clone()
+        .map(|(stage, group)| {
+            (Leaderboard {
+                stage,
+                weather,
+                group,
+                filter: Filter::Friends,
+                platform: Platform::Steam,
+            })
+            .as_url(users[0], &users[1..])
+        })
+        .collect();
+    let responses = download_all::<Response>(&urls)?;
+
+    // collect the responses
+
+    let mut rallys: BTreeMap<(Area, Group), [[Option<(usize, usize)>; 6]; 3]> = BTreeMap::new();
+    for (area, group) in combinations {
+        rallys.insert((area, group), [[None; 6], [None; 6], [None; 6]]);
+    }
+
+    for ((stage, group), response) in leaderboards.zip(responses.iter()) {
+        let response = response.as_ref().unwrap().as_ref().unwrap();
+        let entries = &response.leaderboard;
+        for entry in entries.iter() {
+            let user = name_to_idx[entry.user_name.as_str()];
+            rallys.get_mut(&(stage.area, group)).unwrap()[user][stage.stage_number - 1] =
+                Some((entry.score, entry.car_id));
+        }
+    }
+
+    for ((area, group), users) in &rallys {
+        let (full_times, partial_times, none_times) = split_times(users, &name_to_idx);
+        let (fastest_total, fastest_stages) = fastest_times(&full_times, users);
+
+        println!();
+        println!("{:?} ({:?})", area, group);
+        stages(
+            &full_times,
+            &partial_times,
+            &none_times,
+            fastest_total,
+            fastest_stages,
+            *group,
+            *area,
+            direction,
+        );
+    }
+
+    println!();
+    total_stages(&rallys, &name_to_idx);
+
+    Ok(())
+}
 
 pub fn stages(
     full_times: &[FullTime],
