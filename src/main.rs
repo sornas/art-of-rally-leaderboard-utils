@@ -157,13 +157,21 @@ fn text_table(
     none_times: &[&str],
     fastest_total: Option<usize>,
     fastest_stages: [Option<usize>; 6],
+    area: Area,
+    direction: Direction,
 ) {
     let mut table = Table::new();
     table.load_preset(comfy_table::presets::ASCII_HORIZONTAL_ONLY);
-    // TODO: names of stages
-    table.set_header(vec![
-        "user", "total", "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6",
-    ]);
+    let mut header = vec!["user".to_string(), "total".to_string()];
+    header.extend((1..=6).map(|stage_number| {
+        (Stage {
+            area,
+            stage_number,
+            direction,
+        })
+        .to_string()
+    }));
+    table.set_header(header);
     for column in table.column_iter_mut().skip(1) {
         column.set_cell_alignment(CellAlignment::Right);
     }
@@ -229,7 +237,7 @@ fn main() -> Result<(), Whatever> {
                     Stage {
                         area,
                         stage_number,
-                        direction: Direction::Forward,
+                        direction,
                     },
                     group,
                 )
@@ -266,14 +274,11 @@ fn main() -> Result<(), Whatever> {
         }
     }
 
-    // prepare table data: time in total and time per stage, split depending on
-    // how many stages have been run by each driver
-
     for ((area, group), users) in &rallys {
+        // prepare table data: time in total and time per stage, split depending on
+        // how many stages have been run by each driver
         let (full_times, partial_times, none_times) = split_times(users, &name_to_idx);
-        let (fastest_total, fastest_per_stage) = fastest_times(&full_times, users);
-
-        // generate text table
+        let (fastest_total, fastest_stages) = fastest_times(&full_times, users);
 
         println!();
         println!("{:?} ({:?})", area, group);
@@ -282,7 +287,9 @@ fn main() -> Result<(), Whatever> {
             &partial_times,
             &none_times,
             fastest_total,
-            fastest_per_stage,
+            fastest_stages,
+            *area,
+            direction,
         );
     }
 
