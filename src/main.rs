@@ -9,6 +9,7 @@ use curl::{
     easy::{Easy2, Handler, WriteError},
     multi::{Easy2Handle, Multi},
 };
+use indicatif::ProgressBar;
 use itertools::Itertools;
 use serde::Deserialize;
 use snafu::{ResultExt, Whatever};
@@ -41,6 +42,7 @@ fn download(
 fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     urls: &[impl AsRef<str>],
 ) -> Result<Vec<Option<Result<T, Whatever>>>, Whatever> {
+    let progress = ProgressBar::new(urls.len() as _);
     let mut multi = Multi::new();
     let mut handles = urls
         .iter()
@@ -54,16 +56,18 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
 
     let mut running = true;
     while running {
+        progress.tick();
         if multi.perform().whatever_context("error in multi handle")? == 0 {
             running = false;
         }
         multi.messages(|m| {
             let token = m.token().unwrap();
             let handle = handles.get_mut(token).unwrap();
+            // TODO: progress bar should update inside the collector and use content length header
+            progress.inc(1);
             match m.result_for2(handle).unwrap() {
                 Ok(()) => {
                     let _status = handle.response_code().unwrap();
-                    // TODO: report download progress
                     let s = String::from_utf8(mem::take(&mut handle.get_mut().0)).unwrap();
                     let resp = serde_json::from_str(&s).unwrap();
                     responses[token] = Some(Ok(resp));
@@ -198,7 +202,6 @@ fn main() -> Result<(), Whatever> {
     let weather = Weather::Dry;
     let combinations = [(Area::Kenya, Group::GroupB)];
     // let combinations = Area::iter().cartesian_product(Group::iter());
-    // TODO: when running for all combinations, instead print just the number of stages completed per driver
 
     let users = [76561198230518420, 76561198087789780, 76561198062269100];
     let name_to_idx: BTreeMap<_, usize> = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
@@ -260,6 +263,51 @@ fn main() -> Result<(), Whatever> {
             fastest_per_stage,
         );
     }
+
+    println!();
+    let mut table = Table::new();
+    table.load_preset(comfy_table::presets::ASCII_HORIZONTAL_ONLY);
+    let mut header = vec!["area", "group", "total stages"];
+    header.extend(name_to_idx.keys());
+    table.set_header(header);
+    for column in table.column_iter_mut().skip(2) {
+        column.set_cell_alignment(CellAlignment::Right);
+    }
+
+    let mut rows = vec![];
+    for ((area, group), users) in &rallys {
+        let (full_times, partial_times, _) = split_times(users, &name_to_idx);
+
+        let stages =
+            (full_times.len() * 6) + partial_times.iter().map(|(n, _, _, _)| *n).sum::<usize>();
+        let mut row = vec![
+            format!("{area:?}"),
+            format!("{group:?}"),
+            format!("{stages}"),
+        ];
+        for user in name_to_idx.keys() {
+            if let Some(t) = full_times
+                .iter()
+                .find_map(|(t, s, _)| user.eq(s).then_some(*t))
+            {
+                row.push(format!("{} (6)", format_time(t, true)));
+            } else if let Some((n, t)) = partial_times
+                .iter()
+                .find_map(|(n, t, s, _)| user.eq(s).then_some((*n, *t)))
+            {
+                row.push(format!("{} ({})", format_time(t, true), n));
+            } else {
+                row.push("(0)".to_string());
+            }
+        }
+        rows.push(row);
+    }
+
+    rows.sort_by(|e1, e2| e2[2].cmp(&e1[2]));
+    for row in rows {
+        table.add_row(row);
+    }
+    println!("{table}");
 
     Ok(())
 }
