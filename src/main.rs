@@ -89,61 +89,78 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     Ok(responses)
 }
 
-type FullTime<'s> = (usize, &'s str, [usize; 6]);
-type PartialTime<'a> = (usize, usize, &'a str, [Option<usize>; 6]);
+struct FullTime<'s> {
+    total_time: usize,
+    user_name: &'s str,
+    stage_times: [usize; 6],
+    cars: [usize; 6],
+}
+
+struct PartialTime<'s> {
+    finished_stages: usize,
+    total_time: usize,
+    user_name: &'s str,
+    stage_times: [Option<usize>; 6],
+    cars: [Option<usize>; 6],
+}
 
 fn split_times<'s>(
-    users: &[[Option<usize>; 6]; 3],
+    users: &[[Option<(usize, usize)>; 6]],
     name_to_idx: &BTreeMap<&'s str, usize>,
 ) -> (Vec<FullTime<'s>>, Vec<PartialTime<'s>>, Vec<&'s str>) {
     let mut full_times = Vec::new();
     let mut partial_times = Vec::new();
     let mut none_times = Vec::new();
     for (user_name, user_idx) in name_to_idx {
-        let times = &users[*user_idx];
+        let times_cars = &users[*user_idx];
+        let times = times_cars.map(|o| o.map(|(time, _)| time));
+        let cars = times_cars.map(|o| o.map(|(_, car)| car));
         let total_time: usize = times.iter().flatten().sum();
-        let finished = times.iter().copied().filter(Option::is_some).count();
-        let is_full = finished == times.len();
+        let finished = times_cars.iter().copied().filter(Option::is_some).count();
+        let is_full = finished == times_cars.len();
         let is_none = finished == 0;
         if is_full {
-            full_times.push((
+            full_times.push(FullTime {
                 total_time,
-                *user_name,
-                times
-                    .iter()
-                    .cloned()
-                    .map(Option::unwrap)
-                    .collect::<Vec<_>>()
-                    .try_into()
-                    .unwrap(),
-            ));
+                user_name: *user_name,
+                stage_times: times.map(Option::unwrap),
+                cars: cars.map(Option::unwrap),
+            });
         } else if is_none {
             none_times.push(*user_name);
         } else {
-            partial_times.push((finished, total_time, *user_name, *times));
+            partial_times.push(PartialTime {
+                finished_stages: finished,
+                total_time,
+                user_name: *user_name,
+                stage_times: times,
+                cars,
+            });
         }
     }
-    full_times.sort();
+    full_times.sort_by_key(|ft| ft.total_time);
     // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
-    partial_times.sort_by(|(finished1, time1, _, _), (finished2, time2, _, _)| {
-        finished2.cmp(finished1).then(time1.cmp(time2))
+    partial_times.sort_by(|pt1, pt2| {
+        pt2.finished_stages
+            .cmp(&pt1.finished_stages)
+            .then(pt1.total_time.cmp(&pt2.total_time))
     });
     (full_times, partial_times, none_times)
 }
 
 fn fastest_times(
     full_times: &[FullTime],
-    users: &[[Option<usize>; 6]; 3],
+    user_times: &[[Option<(usize, usize)>; 6]],
 ) -> (Option<usize>, [Option<usize>; 6]) {
-    let fastest_total = full_times.iter().map(|(t, _, _)| *t).min();
+    let fastest_total = full_times.iter().map(|ft| ft.total_time).min();
     let mut fastest_per_stage = [Option::<usize>::None; 6];
-    for times in users {
+    for times in user_times {
         for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
             let time = time.as_ref().map(|u| *u);
             let fastest_ = fastest.as_ref().map(|u| *u);
             match (time, fastest_) {
-                (Some(t), None) => *fastest = Some(t),
-                (Some(t), Some(cur)) => *fastest = Some(cur.min(t)),
+                (Some((t, _)), None) => *fastest = Some(t),
+                (Some((t, _)), Some(cur)) => *fastest = Some(cur.min(t)),
                 (None, _) => {}
             }
         }
@@ -157,6 +174,7 @@ fn text_table(
     none_times: &[&str],
     fastest_total: Option<usize>,
     fastest_stages: [Option<usize>; 6],
+    group: Group,
     area: Area,
     direction: Direction,
 ) {
@@ -175,34 +193,36 @@ fn text_table(
     for column in table.column_iter_mut().skip(1) {
         column.set_cell_alignment(CellAlignment::Right);
     }
-    for (total_time, name, times) in full_times {
+    for ft in full_times {
         let mut row = vec![
-            name.to_string(),
+            ft.user_name.to_string(),
             format!(
                 "{}\n{}",
-                format_time(*total_time, true),
-                format_delta(*total_time, fastest_total.unwrap(), true)
+                format_time(ft.total_time, true),
+                format_delta(ft.total_time, fastest_total.unwrap(), true),
             ),
         ];
-        row.extend(times.iter().enumerate().map(|(i, t)| {
+        row.extend(ft.stage_times.iter().enumerate().map(|(i, t)| {
             format!(
-                "{}\n{}",
+                "{}\n{}\n{}",
                 format_time(*t, false),
-                format_delta(*t, fastest_stages[i].unwrap(), false)
+                format_delta(*t, fastest_stages[i].unwrap(), false),
+                art_of_rally_leaderboard_api::car_name(group, ft.cars[i]),
             )
         }));
         table.add_row(row);
     }
-    for (_, total_time, name, times) in partial_times {
+    for pt in partial_times {
         let mut row = vec![
-            name.to_string(),
-            format!("* {}", format_time(*total_time, true)),
+            pt.user_name.to_string(),
+            format!("* {}", format_time(pt.total_time, true)),
         ];
-        row.extend(times.iter().enumerate().map(|(i, t)| match t {
+        row.extend(pt.stage_times.iter().enumerate().map(|(i, t)| match t {
             Some(t) => format!(
-                "{}\n{}",
+                "{}\n{}\n{}",
                 format_time(*t, false),
-                format_delta(*t, fastest_stages[i].unwrap(), false)
+                format_delta(*t, fastest_stages[i].unwrap(), false),
+                art_of_rally_leaderboard_api::car_name(group, pt.cars[i].unwrap()),
             ),
             None => "-".to_string(),
         }));
@@ -259,7 +279,7 @@ fn main() -> Result<(), Whatever> {
 
     // collect the responses
 
-    let mut rallys: BTreeMap<(Area, Group), [[Option<usize>; 6]; 3]> = BTreeMap::new();
+    let mut rallys: BTreeMap<(Area, Group), [[Option<(usize, usize)>; 6]; 3]> = BTreeMap::new();
     for (area, group) in combinations {
         rallys.insert((area, group), [[None; 6], [None; 6], [None; 6]]);
     }
@@ -270,7 +290,7 @@ fn main() -> Result<(), Whatever> {
         for entry in entries.iter() {
             let user = name_to_idx[entry.user_name.as_str()];
             rallys.get_mut(&(stage.area, group)).unwrap()[user][stage.stage_number - 1] =
-                Some(entry.score);
+                Some((entry.score, entry.car_id));
         }
     }
 
@@ -288,6 +308,7 @@ fn main() -> Result<(), Whatever> {
             &none_times,
             fastest_total,
             fastest_stages,
+            *group,
             *area,
             direction,
         );
@@ -307,8 +328,11 @@ fn main() -> Result<(), Whatever> {
     for ((area, group), users) in &rallys {
         let (full_times, partial_times, _) = split_times(users, &name_to_idx);
 
-        let stages =
-            (full_times.len() * 6) + partial_times.iter().map(|(n, _, _, _)| *n).sum::<usize>();
+        let stages = (full_times.len() * 6)
+            + partial_times
+                .iter()
+                .map(|pt| pt.finished_stages)
+                .sum::<usize>();
         let mut row = vec![
             format!("{area:?}"),
             format!("{group:?}"),
@@ -317,13 +341,14 @@ fn main() -> Result<(), Whatever> {
         for user in name_to_idx.keys() {
             if let Some(t) = full_times
                 .iter()
-                .find_map(|(t, s, _)| user.eq(s).then_some(*t))
+                .find_map(|ft| ft.user_name.eq(*user).then_some(ft.total_time))
             {
                 row.push(format!("{} (6)", format_time(t, true)));
-            } else if let Some((n, t)) = partial_times
-                .iter()
-                .find_map(|(n, t, s, _)| user.eq(s).then_some((*n, *t)))
-            {
+            } else if let Some((t, n)) = partial_times.iter().find_map(|pt| {
+                pt.user_name
+                    .eq(*user)
+                    .then_some((pt.total_time, pt.finished_stages))
+            }) {
                 row.push(format!("{} ({})", format_time(t, true), n));
             } else {
                 row.push("(0)".to_string());

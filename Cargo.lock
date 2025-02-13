@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "art-of-rally-leaderboard-api"
 version = "0.1.0"
-source = "git+https://github.com/sornas/art-of-rally-leaderboard-api?branch=names#7ac6c6ecf84c8c23530196e5c2b00f5d9fd5ecd3"
+source = "git+https://github.com/sornas/art-of-rally-leaderboard-api?branch=names#f8cc8d58e40c7956d95001b9dd7da9392a07a87c"
 dependencies = [
  "serde",
  "strum",
