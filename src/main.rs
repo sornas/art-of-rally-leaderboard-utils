@@ -2,7 +2,7 @@ use std::mem;
 use std::{collections::BTreeMap, time::Duration};
 
 use art_of_rally_leaderboard_api::{
-    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Weather,
+    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Stage, Weather,
 };
 use comfy_table::{CellAlignment, Table};
 use curl::{
@@ -135,7 +135,7 @@ fn fastest_times(
     full_times: &[FullTime],
     users: &[[Option<usize>; 6]; 3],
 ) -> (Option<usize>, [Option<usize>; 6]) {
-    let fastest_total = full_times.iter().map(|(t, _, _)| *t).max();
+    let fastest_total = full_times.iter().map(|(t, _, _)| *t).min();
     let mut fastest_per_stage = [Option::<usize>::None; 6];
     for times in users {
         for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
@@ -176,7 +176,13 @@ fn text_table(
                 format_delta(*total_time, fastest_total.unwrap(), true)
             ),
         ];
-        row.extend(times.iter().map(|t| format_time(*t, false)));
+        row.extend(times.iter().enumerate().map(|(i, t)| {
+            format!(
+                "{}\n{}",
+                format_time(*t, false),
+                format_delta(*t, fastest_stages[i].unwrap(), false)
+            )
+        }));
         table.add_row(row);
     }
     for (_, total_time, name, times) in partial_times {
@@ -215,15 +221,25 @@ fn main() -> Result<(), Whatever> {
 
     // generate API URLs for each leaderboard and download the leaderboards
 
-    let leaderboards = (1..=6).cartesian_product(combinations.clone());
+    let leaderboards =
+        (1..=6)
+            .cartesian_product(combinations.clone())
+            .map(|(stage_number, (area, group))| {
+                (
+                    Stage {
+                        area,
+                        stage_number,
+                        direction: Direction::Forward,
+                    },
+                    group,
+                )
+            });
     let urls: Vec<_> = leaderboards
         .clone()
-        .map(|(stage, (area, group))| {
+        .map(|(stage, group)| {
             (Leaderboard {
-                area,
-                direction,
-                weather,
                 stage,
+                weather,
                 group,
                 filter: Filter::Friends,
                 platform: Platform::Steam,
@@ -240,12 +256,13 @@ fn main() -> Result<(), Whatever> {
         rallys.insert((area, group), [[None; 6], [None; 6], [None; 6]]);
     }
 
-    for ((stage, (area, group)), response) in leaderboards.zip(responses.iter()) {
+    for ((stage, group), response) in leaderboards.zip(responses.iter()) {
         let response = response.as_ref().unwrap().as_ref().unwrap();
         let entries = &response.leaderboard;
         for entry in entries.iter() {
             let user = name_to_idx[entry.user_name.as_str()];
-            rallys.get_mut(&(area, group)).unwrap()[user][stage - 1] = Some(entry.score);
+            rallys.get_mut(&(stage.area, group)).unwrap()[user][stage.stage_number - 1] =
+                Some(entry.score);
         }
     }
 

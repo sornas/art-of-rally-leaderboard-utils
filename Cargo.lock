@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "art-of-rally-leaderboard-api"
 version = "0.1.0"
-source = "git+https://github.com/sornas/art-of-rally-leaderboard-api?branch=enum-iter#a8275127aee7b2bc73cc39fc96bbcf6b9810777e"
+source = "git+https://github.com/sornas/art-of-rally-leaderboard-api?branch=names#7ac6c6ecf84c8c23530196e5c2b00f5d9fd5ecd3"
 dependencies = [
  "serde",
  "strum",
@@ -33,9 +33,9 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
 name = "cc"
-version = "1.2.12"
+version = "1.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "755717a7de9ec452bf7f3f1a3099085deabd7f2962b861dae91ecd7a365903d2"
+checksum = "c7777341816418c02e033934a09f20dc0ccaf65a5201ef8a450ae0105a573fda"
 dependencies = [
  "shlex",
 ]
@@ -86,9 +86,9 @@ dependencies = [
 
 [[package]]
 name = "curl-sys"
-version = "0.4.78+curl-8.11.0"
+version = "0.4.79+curl-8.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eec768341c5c7789611ae51cf6c459099f22e64a5d5d0ce4892434e33821eaf"
+checksum = "18a9bbeeb3996717ef1248018db20d1b0b5ba7165bff60e3b5135b4f4c2b37a5"
 dependencies = [
  "cc",
  "libc",
