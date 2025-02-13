@@ -2,9 +2,8 @@ use std::collections::BTreeMap;
 use std::mem;
 
 use art_of_rally_leaderboard_api::{
-    Area, Direction, Filter, Group, IntoEnumIterator as _, Leaderboard, Platform, Response, Weather,
+    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Weather,
 };
-use color_eyre::Result;
 use comfy_table::{CellAlignment, Table};
 use curl::{
     easy::{Easy2, Handler, WriteError},
@@ -12,6 +11,7 @@ use curl::{
 };
 use itertools::Itertools;
 use serde::Deserialize;
+use snafu::{ResultExt, Whatever};
 
 struct Collector(Vec<u8>);
 impl Handler for Collector {
@@ -22,27 +22,31 @@ impl Handler for Collector {
 }
 
 /// Start a request on a [Multi] handle.
-fn download(multi: &mut Multi, token: usize, url: &str) -> Result<Easy2Handle<Collector>> {
-    let version = curl::Version::get();
+fn download(
+    multi: &mut Multi,
+    token: usize,
+    url: &str,
+) -> Result<Easy2Handle<Collector>, Whatever> {
     let mut request = Easy2::new(Collector(Vec::new()));
-    request.url(url)?;
-    request.useragent(&format!("curl/{}", version.version()))?;
+    request.url(url).whatever_context("invalid url")?;
 
-    let mut handle = multi.add2(request)?;
-    handle.set_token(token)?;
+    let mut handle = multi
+        .add2(request)
+        .whatever_context("could not add request to multi handle")?;
+    handle.set_token(token).unwrap();
     Ok(handle)
 }
 
 /// Download and JSON-parse the results for some URLs.
 fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     urls: &[impl AsRef<str>],
-) -> Result<Vec<Option<Result<T>>>> {
+) -> Result<Vec<Option<Result<T, Whatever>>>, Whatever> {
     let mut multi = Multi::new();
     let mut handles = urls
         .iter()
         .enumerate()
         .map(|(token, url)| download(&mut multi, token, url.as_ref()))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     let mut responses = Vec::new();
     for _ in 0..handles.len() {
         responses.push(Option::None);
@@ -50,7 +54,7 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
 
     let mut running = true;
     while running {
-        if multi.perform()? == 0 {
+        if multi.perform().whatever_context("error in multi handle")? == 0 {
             running = false;
         }
         multi.messages(|m| {
@@ -65,7 +69,9 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
                     responses[token] = Some(Ok(resp));
                 }
                 Err(e) => {
-                    responses[token] = Some(Err(e.into()));
+                    responses[token] = Some(Err(e).with_whatever_context(|_| {
+                        format!("error in transfer for {}", urls[token].as_ref())
+                    }));
                 }
             }
         });
@@ -187,9 +193,7 @@ fn text_table(
     println!("{table}");
 }
 
-fn main() -> Result<()> {
-    color_eyre::install().unwrap();
-
+fn main() -> Result<(), Whatever> {
     let direction = Direction::Forward;
     let weather = Weather::Dry;
     let combinations = [(Area::Kenya, Group::GroupB)];
