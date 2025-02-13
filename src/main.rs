@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::mem;
+use std::{collections::BTreeMap, time::Duration};
 
 use art_of_rally_leaderboard_api::{
     Area, Direction, Filter, Group, Leaderboard, Platform, Response, Weather,
@@ -9,7 +9,7 @@ use curl::{
     easy::{Easy2, Handler, WriteError},
     multi::{Easy2Handle, Multi},
 };
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use serde::Deserialize;
 use snafu::{ResultExt, Whatever};
@@ -42,7 +42,13 @@ fn download(
 fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     urls: &[impl AsRef<str>],
 ) -> Result<Vec<Option<Result<T, Whatever>>>, Whatever> {
-    let progress = ProgressBar::new(urls.len() as _);
+    let progress_style = ProgressStyle::default_bar()
+        .template("{bar} {msg} ({pos}/{len}) {elapsed}")
+        .unwrap()
+        .progress_chars("#|-");
+    let progress = ProgressBar::new(urls.len() as _).with_style(progress_style);
+    progress.enable_steady_tick(Duration::from_millis(100));
+
     let mut multi = Multi::new();
     let mut handles = urls
         .iter()
@@ -56,7 +62,6 @@ fn download_all<T: for<'a> Deserialize<'a> + Clone>(
 
     let mut running = true;
     while running {
-        progress.tick();
         if multi.perform().whatever_context("error in multi handle")? == 0 {
             running = false;
         }
@@ -266,7 +271,7 @@ fn main() -> Result<(), Whatever> {
 
     println!();
     let mut table = Table::new();
-    table.load_preset(comfy_table::presets::ASCII_HORIZONTAL_ONLY);
+    table.load_preset(comfy_table::presets::ASCII_FULL_CONDENSED);
     let mut header = vec!["area", "group", "total stages"];
     header.extend(name_to_idx.keys());
     table.set_header(header);
