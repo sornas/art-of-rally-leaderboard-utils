@@ -1,0 +1,43 @@
+p,
+td,
+th {
+  font-family: "Atkinson Hyperlegible Next", serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: normal;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th {
+  font-weight: 800;
+}
+
+tr.times td:not(:first-child),
+tr.deltas td:not(:first-child) {
+  font-family: "Ubuntu Mono", serif;
+  font-weight: 400;
+  font-style: normal;
+}
+
+th,
+td {
+  text-align: end;
+}
+
+th,
+td {
+  padding: 0 1ex;
+}
+
+thead th,
+tr.cars td {
+  padding-bottom: 0.3em;
+}
+
+tr.times td {
+  padding-top: 0.3em;
+  border-top: 1px solid black;
+}

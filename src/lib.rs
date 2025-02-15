@@ -1,13 +1,22 @@
 use std::mem;
 use std::{collections::BTreeMap, time::Duration};
 
+use art_of_rally_leaderboard_api::{
+    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Stage, Weather,
+};
 use curl::{
     easy::{Easy2, Handler, WriteError},
     multi::{Easy2Handle, Multi},
 };
 use indicatif::{ProgressBar, ProgressStyle};
+use itertools::Itertools as _;
 use serde::Deserialize;
 use snafu::{ResultExt, Whatever};
+
+pub mod table_utils;
+
+pub type Rally<const STAGES: usize> = [[Option<(usize, usize)>; STAGES]; 3];
+pub type UserMap<'s> = BTreeMap<&'s str, usize>;
 
 struct Collector(Vec<u8>);
 impl Handler for Collector {
@@ -84,6 +93,68 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     Ok(responses)
 }
 
+pub fn get_interesting_leaderboards(
+) -> Result<(BTreeMap<(Area, Group), Rally<6>>, UserMap<'static>), Whatever> {
+    let direction = Direction::Forward;
+    let weather = Weather::Dry;
+    let combinations = [(Area::Kenya, Group::GroupB)];
+    // let combinations = Area::iter().cartesian_product(Group::iter());
+
+    let users = [76561198230518420, 76561198087789780, 76561198062269100];
+    let name_to_idx: UserMap = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
+        .into_iter()
+        .collect();
+
+    // generate API URLs for each leaderboard and download the leaderboards
+
+    let leaderboards =
+        (1..=6)
+            .cartesian_product(combinations.clone())
+            .map(|(stage_number, (area, group))| {
+                (
+                    Stage {
+                        area,
+                        stage_number,
+                        direction,
+                    },
+                    group,
+                )
+            });
+    let urls: Vec<_> = leaderboards
+        .clone()
+        .map(|(stage, group)| {
+            (Leaderboard {
+                stage,
+                weather,
+                group,
+                filter: Filter::Friends,
+                platform: Platform::Steam,
+            })
+            .as_url(users[0], &users[1..])
+        })
+        .collect();
+    let responses = download_all::<Response>(&urls)?;
+
+    // collect the responses
+
+    let mut rallys: BTreeMap<(Area, Group), [[Option<(usize, usize)>; 6]; 3]> = BTreeMap::new();
+    for (area, group) in combinations {
+        rallys.insert((area, group), [[None; 6], [None; 6], [None; 6]]);
+    }
+
+    for ((stage, group), response) in leaderboards.zip(responses.iter()) {
+        let response = response.as_ref().unwrap().as_ref().unwrap();
+        let entries = &response.leaderboard;
+        for entry in entries.iter() {
+            let user = name_to_idx[entry.user_name.as_str()];
+            rallys.get_mut(&(stage.area, group)).unwrap()[user][stage.stage_number - 1] =
+                Some((entry.score, entry.car_id));
+        }
+    }
+
+    Ok((rallys, name_to_idx))
+}
+
 pub struct FullTime<'s> {
     pub total_time: usize,
     pub user_name: &'s str,
@@ -100,8 +171,8 @@ pub struct PartialTime<'s> {
 }
 
 pub fn split_times<'s>(
-    users: &[[Option<(usize, usize)>; 6]; 3],
-    name_to_idx: &BTreeMap<&'s str, usize>,
+    users: &Rally<6>,
+    name_to_idx: &UserMap<'s>,
 ) -> (Vec<FullTime<'s>>, Vec<PartialTime<'s>>, Vec<&'s str>) {
     let mut full_times = Vec::new();
     let mut partial_times = Vec::new();
@@ -161,4 +232,24 @@ pub fn fastest_times(
         }
     }
     (fastest_total, fastest_per_stage)
+}
+
+pub fn format_time(ms: usize, long: bool) -> String {
+    let minutes = ms / 1000 / 60;
+    let seconds = (ms / 1000) % 60;
+    let millis = ms % 1000;
+    if long {
+        format!("{minutes:02}:{seconds:02}.{millis:03}")
+    } else {
+        format!("{minutes:01}:{seconds:02}.{millis:03}")
+    }
+}
+
+pub fn format_delta(ms: usize, fast: usize, long: bool) -> String {
+    assert!(ms >= fast);
+    if ms == fast {
+        "         ".to_string()
+    } else {
+        format!("+{}", format_time(ms - fast, long))
+    }
 }
