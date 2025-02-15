@@ -27,7 +27,7 @@ fn index(body: &str) -> String {
 <h1>basvektorernas art of rally-leaderboard</h1>
 {body}
 
-last updated: {updated}
+<p>last updated: {updated}</p>
 </body>
 </html>
     "#
