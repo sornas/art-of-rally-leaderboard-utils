@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use art_of_rally_leaderboard_api::{Area, Direction, Group, Stage};
+use art_of_rally_leaderboard_api::{Area, Direction, Group};
 use art_of_rally_leaderboard_utils::{
-    fastest_times, format_delta, format_time, get_interesting_leaderboards, split_times, FullTime,
-    PartialTime,
+    fastest_times, format_time, get_interesting_leaderboards, split_times, table_utils, FullTime,
+    PartialTime, Rally, UserMap,
 };
 use comfy_table::{CellAlignment, Table};
 use snafu::Whatever;
@@ -45,19 +45,31 @@ pub fn stages(
     area: Area,
     direction: Direction,
 ) {
+    let (header, rows) = table_utils::stages(
+        full_times,
+        partial_times,
+        none_times,
+        fastest_total,
+        fastest_stages,
+        group,
+        area,
+        direction,
+    );
+
     let mut table = Table::new();
     table.load_preset(comfy_table::presets::ASCII_HORIZONTAL_ONLY);
     table.set_header(header);
     for column in table.column_iter_mut().skip(1) {
         column.set_cell_alignment(CellAlignment::Right);
     }
+    table.add_rows(
+        rows.iter()
+            .map(|row| row.iter().map(|[s1, s2, s3]| format!("{s1}\n{s2}\n{s3}"))),
+    );
     println!("{table}");
 }
 
-pub fn total_stages(
-    rallys: &BTreeMap<(Area, Group), [[Option<(usize, usize)>; 6]; 3]>,
-    name_to_idx: &BTreeMap<&str, usize>,
-) {
+pub fn total_stages(rallys: &BTreeMap<(Area, Group), Rally<6>>, name_to_idx: &UserMap) {
     let mut table = Table::new();
     table.load_preset(comfy_table::presets::ASCII_FULL_CONDENSED);
     let mut header = vec!["area", "group", "total stages"];
