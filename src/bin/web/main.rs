@@ -5,6 +5,7 @@ use art_of_rally_leaderboard_utils::{
 use snafu::Whatever;
 
 fn index(body: &str) -> String {
+    let updated = chrono::Utc::now().format("%F %R %Z");
     format!(
         r#"
 <!DOCTYPE html>
@@ -25,6 +26,8 @@ fn index(body: &str) -> String {
 <body>
 <h1>basvektorernas art of rally-leaderboard</h1>
 {body}
+
+last updated: {updated}
 </body>
 </html>
     "#
