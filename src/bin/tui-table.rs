@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use art_of_rally_leaderboard_api::{Area, Direction, Group};
+use art_of_rally_leaderboard_api::{Area, Direction, Group, Weather};
 use art_of_rally_leaderboard_utils::{
     fastest_times, format_time, get_interesting_leaderboards, split_times, table_utils, FullTime,
     PartialTime, Rally, UserMap,
@@ -11,12 +11,12 @@ use snafu::Whatever;
 fn main() -> Result<(), Whatever> {
     let (rallys, name_to_idx) = get_interesting_leaderboards()?;
 
-    for ((area, group), users) in &rallys {
+    for ((area, group, weather), users) in &rallys {
         let (full_times, partial_times, none_times) = split_times(users, &name_to_idx);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, users);
 
         println!();
-        println!("{:?} ({:?})", area, group);
+        println!("{area:?} - {group:?} ({weather:?})");
         stages(
             &full_times,
             &partial_times,
@@ -69,10 +69,10 @@ pub fn stages(
     println!("{table}");
 }
 
-pub fn total_stages(rallys: &BTreeMap<(Area, Group), Rally<6>>, name_to_idx: &UserMap) {
+pub fn total_stages(rallys: &BTreeMap<(Area, Group, Weather), Rally<6>>, name_to_idx: &UserMap) {
     let mut table = Table::new();
     table.load_preset(comfy_table::presets::ASCII_FULL_CONDENSED);
-    let mut header = vec!["area", "group", "total stages"];
+    let mut header = vec!["area", "group", "weather", "total stages"];
     header.extend(name_to_idx.keys());
     table.set_header(header);
     for column in table.column_iter_mut().skip(2) {
@@ -80,7 +80,7 @@ pub fn total_stages(rallys: &BTreeMap<(Area, Group), Rally<6>>, name_to_idx: &Us
     }
 
     let mut rows = vec![];
-    for ((area, group), users) in rallys {
+    for ((area, group, weather), users) in rallys {
         let (full_times, partial_times, _) = split_times(users, &name_to_idx);
 
         let stages = (full_times.len() * 6)
@@ -91,6 +91,7 @@ pub fn total_stages(rallys: &BTreeMap<(Area, Group), Rally<6>>, name_to_idx: &Us
         let mut row = vec![
             format!("{area:?}"),
             format!("{group:?}"),
+            format!("{weather:?}"),
             format!("{stages}"),
         ];
         for user in name_to_idx.keys() {

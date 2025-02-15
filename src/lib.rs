@@ -94,10 +94,12 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Clone>(
 }
 
 pub fn get_interesting_leaderboards(
-) -> Result<(BTreeMap<(Area, Group), Rally<6>>, UserMap<'static>), Whatever> {
+) -> Result<(BTreeMap<(Area, Group, Weather), Rally<6>>, UserMap<'static>), Whatever> {
     let direction = Direction::Forward;
-    let weather = Weather::Dry;
-    let combinations = [(Area::Kenya, Group::GroupB)];
+    let combinations = [
+        (Area::Kenya, Group::GroupB, Weather::Dry),
+        (Area::Japan, Group::GroupA, Weather::Wet),
+    ];
     // let combinations = Area::iter().cartesian_product(Group::iter());
 
     let users = [76561198230518420, 76561198087789780, 76561198062269100];
@@ -107,22 +109,22 @@ pub fn get_interesting_leaderboards(
 
     // generate API URLs for each leaderboard and download the leaderboards
 
-    let leaderboards =
-        (1..=6)
-            .cartesian_product(combinations.clone())
-            .map(|(stage_number, (area, group))| {
-                (
-                    Stage {
-                        area,
-                        stage_number,
-                        direction,
-                    },
-                    group,
-                )
-            });
+    let leaderboards = (1..=6).cartesian_product(combinations.clone()).map(
+        |(stage_number, (area, group, weather))| {
+            (
+                Stage {
+                    area,
+                    stage_number,
+                    direction,
+                },
+                group,
+                weather,
+            )
+        },
+    );
     let urls: Vec<_> = leaderboards
         .clone()
-        .map(|(stage, group)| {
+        .map(|(stage, group, weather)| {
             (Leaderboard {
                 stage,
                 weather,
@@ -137,17 +139,18 @@ pub fn get_interesting_leaderboards(
 
     // collect the responses
 
-    let mut rallys: BTreeMap<(Area, Group), [[Option<(usize, usize)>; 6]; 3]> = BTreeMap::new();
-    for (area, group) in combinations {
-        rallys.insert((area, group), [[None; 6], [None; 6], [None; 6]]);
+    let mut rallys: BTreeMap<(Area, Group, Weather), [[Option<(usize, usize)>; 6]; 3]> =
+        BTreeMap::new();
+    for (area, group, weather) in combinations {
+        rallys.insert((area, group, weather), [[None; 6], [None; 6], [None; 6]]);
     }
 
-    for ((stage, group), response) in leaderboards.zip(responses.iter()) {
+    for ((stage, group, weather), response) in leaderboards.zip(responses.iter()) {
         let response = response.as_ref().unwrap().as_ref().unwrap();
         let entries = &response.leaderboard;
         for entry in entries.iter() {
             let user = name_to_idx[entry.user_name.as_str()];
-            rallys.get_mut(&(stage.area, group)).unwrap()[user][stage.stage_number - 1] =
+            rallys.get_mut(&(stage.area, group, weather)).unwrap()[user][stage.stage_number - 1] =
                 Some((entry.score, entry.car_id));
         }
     }

@@ -1,4 +1,4 @@
-use art_of_rally_leaderboard_api::{Area, Direction, Group};
+use art_of_rally_leaderboard_api::{Area, Direction, Group, Weather};
 use art_of_rally_leaderboard_utils::{
     fastest_times, get_interesting_leaderboards, split_times, table_utils,
 };
@@ -34,7 +34,13 @@ fn index(body: &str) -> String {
     )
 }
 
-fn rally(area: Area, group: Group, header: Vec<String>, rows: Vec<Vec<[String; 3]>>) -> String {
+fn rally(
+    area: Area,
+    group: Group,
+    weather: Weather,
+    header: Vec<String>,
+    rows: Vec<Vec<[String; 3]>>,
+) -> String {
     let header_cells =
         header
             .iter()
@@ -65,7 +71,7 @@ fn rally(area: Area, group: Group, header: Vec<String>, rows: Vec<Vec<[String; 3
 
     format!(
         r#"
-<h2>{area:?} - {group:?}</h2>
+<h2>{area:?} - {group:?} ({weather:?})</h2>
 <table>
 <thead>
 {header_cells}
@@ -79,7 +85,7 @@ fn rally(area: Area, group: Group, header: Vec<String>, rows: Vec<Vec<[String; 3
 fn main() -> Result<(), Whatever> {
     let (rallys, user_map) = get_interesting_leaderboards()?;
     let mut body = String::new();
-    for ((area, group), users) in &rallys {
+    for ((area, group, weather), users) in &rallys {
         let (full_times, partial_times, none_times) = split_times(users, &user_map);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, users);
         let (header, rows) = table_utils::stages(
@@ -92,7 +98,7 @@ fn main() -> Result<(), Whatever> {
             *area,
             Direction::Forward,
         );
-        body += &rally(*area, *group, header, rows);
+        body += &rally(*area, *group, *weather, header, rows);
     }
     let html = index(&body);
     println!("{html}");
