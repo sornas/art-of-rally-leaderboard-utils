@@ -9,6 +9,7 @@ comfy-table = { version = "7.1.4", default-features = false }
 curl = "0.4.47"
 indicatif = "0.17.11"
 itertools = "0.14.0"
+rayon = "1.10.0"
 serde = "1.0.217"
 serde_json = "1.0.138"
 snafu = "0.8.5"

@@ -1,128 +1,139 @@
 use std::collections::BTreeMap;
 
 use art_of_rally_leaderboard_api::{
-    Area, Direction, Filter, Group, Leaderboard, Platform, Response, Stage, Weather,
+    Area, Direction, Group, Leaderboard, Platform, Response, Stage, Weather,
 };
-use itertools::Itertools as _;
 use snafu::Whatever;
 
 pub mod http;
 pub mod table_utils;
 
-pub type Rally<const STAGES: usize> = [[Option<(usize, usize)>; STAGES]; 3];
-pub type UserMap<'s> = BTreeMap<&'s str, usize>;
+pub struct Rally {
+    pub stages: Vec<(Stage, Group, Weather)>,
+    pub results: Vec<(String, Vec<Option<StageResult>>)>,
+}
 
-pub fn get_interesting_leaderboards(
-) -> Result<(BTreeMap<(Area, Group, Weather), Rally<6>>, UserMap<'static>), Whatever> {
-    let direction = Direction::Forward;
-    let combinations = [
-        (Area::Kenya, Group::GroupB, Weather::Dry),
-        (Area::Japan, Group::GroupA, Weather::Wet),
-    ];
-    // let combinations = Area::iter().cartesian_product(Group::iter());
+#[derive(Clone)]
+pub struct StageResult {
+    pub car: usize,
+    pub time_ms: usize,
+}
 
-    let users = [76561198230518420, 76561198087789780, 76561198062269100];
-    let name_to_idx: UserMap = vec![("sornas", 0), ("jonais", 1), ("Gurka", 2)]
-        .into_iter()
-        .collect();
-
-    // generate API URLs for each leaderboard and download the leaderboards
-
-    let leaderboards = (1..=6).cartesian_product(combinations.clone()).map(
-        |(stage_number, (area, group, weather))| {
-            (
-                Stage {
-                    area,
-                    stage_number,
-                    direction,
-                },
-                group,
-                weather,
-            )
-        },
-    );
-    let urls: Vec<_> = leaderboards
-        .clone()
-        .map(|(stage, group, weather)| {
-            (Leaderboard {
-                stage,
-                weather,
-                group,
-                filter: Filter::Friends,
-                platform: Platform::Steam,
+pub fn get_default_rallys() -> Vec<Vec<(Stage, Group, Weather)>> {
+    vec![
+        [1, 2, 3, 4, 5, 6]
+            .map(|stage_number| {
+                (
+                    {
+                        Stage {
+                            area: Area::Kenya,
+                            stage_number,
+                            direction: Direction::Forward,
+                        }
+                    },
+                    Group::GroupB,
+                    Weather::Dry,
+                )
             })
-            .as_url(users[0], &users[1..])
-        })
+            .to_vec(),
+        [1, 2, 3, 4, 5, 6]
+            .map(|stage_number| {
+                (
+                    {
+                        Stage {
+                            area: Area::Japan,
+                            stage_number,
+                            direction: Direction::Forward,
+                        }
+                    },
+                    Group::GroupA,
+                    Weather::Wet,
+                )
+            })
+            .to_vec(),
+    ]
+}
+
+pub fn get_default_users() -> (Platform, Vec<u64>) {
+    (
+        Platform::Steam,
+        vec![76561198230518420, 76561198087789780, 76561198062269100],
+    )
+}
+
+pub fn get_rally_results(leaderboards: &[Leaderboard], users: &[u64]) -> Result<Rally, Whatever> {
+    let urls: Vec<_> = leaderboards
+        .iter()
+        .map(|l| l.as_url(users[0], &users[1..]))
         .collect();
     let responses = http::download_all::<Response>(&urls)?;
 
-    // collect the responses
-
-    let mut rallys: BTreeMap<(Area, Group, Weather), [[Option<(usize, usize)>; 6]; 3]> =
-        BTreeMap::new();
-    for (area, group, weather) in combinations {
-        rallys.insert((area, group, weather), [[None; 6], [None; 6], [None; 6]]);
-    }
-
-    for ((stage, group, weather), response) in leaderboards.zip(responses.iter()) {
-        let response = response.as_ref().unwrap().as_ref().unwrap();
-        let entries = &response.leaderboard;
-        for entry in entries.iter() {
-            let user = name_to_idx[entry.user_name.as_str()];
-            rallys.get_mut(&(stage.area, group, weather)).unwrap()[user][stage.stage_number - 1] =
-                Some((entry.score, entry.car_id));
+    let mut results: BTreeMap<String, Vec<Option<StageResult>>> = BTreeMap::new();
+    for (i, response) in responses.into_iter().enumerate() {
+        let response = response.unwrap().unwrap();
+        let entries = response.leaderboard;
+        for entry in entries {
+            let for_user = results
+                .entry(entry.user_name)
+                .or_insert_with(|| vec![Option::None; leaderboards.len()]);
+            for_user[i] = Some(StageResult {
+                car: entry.car_id,
+                time_ms: entry.score,
+            })
         }
     }
 
-    Ok((rallys, name_to_idx))
+    Ok(Rally {
+        stages: leaderboards
+            .iter()
+            .map(|l| (l.stage, l.group, l.weather))
+            .collect(),
+        results: results.into_iter().collect(),
+    })
 }
 
 pub struct FullTime<'s> {
     pub total_time: usize,
     pub user_name: &'s str,
-    pub stage_times: [usize; 6],
-    pub cars: [usize; 6],
+    pub stage_times: Vec<usize>,
+    pub cars: Vec<usize>,
 }
 
 pub struct PartialTime<'s> {
     pub finished_stages: usize,
     pub total_time: usize,
     pub user_name: &'s str,
-    pub stage_times: [Option<usize>; 6],
-    pub cars: [Option<usize>; 6],
+    pub stage_times: Vec<Option<usize>>,
+    pub cars: Vec<Option<usize>>,
 }
 
-pub fn split_times<'s>(
-    users: &Rally<6>,
-    name_to_idx: &UserMap<'s>,
-) -> (Vec<FullTime<'s>>, Vec<PartialTime<'s>>, Vec<&'s str>) {
+pub fn split_times(rally: &Rally) -> (Vec<FullTime<'_>>, Vec<PartialTime<'_>>) {
     let mut full_times = Vec::new();
     let mut partial_times = Vec::new();
-    let mut none_times = Vec::new();
-    for (user_name, user_idx) in name_to_idx {
-        let times_cars = &users[*user_idx];
-        let times = times_cars.map(|o| o.map(|(time, _)| time));
-        let cars = times_cars.map(|o| o.map(|(_, car)| car));
-        let total_time: usize = times.iter().flatten().sum();
-        let finished = times_cars.iter().copied().filter(Option::is_some).count();
-        let is_full = finished == times_cars.len();
-        let is_none = finished == 0;
+
+    for results in rally.results.iter() {
+        let times = results
+            .1
+            .iter()
+            .map(|o| o.as_ref().map(|stage| stage.time_ms));
+        let cars = results.1.iter().map(|o| o.as_ref().map(|stage| stage.car));
+        let total_time: usize = times.clone().flatten().sum();
+        let finished = results.1.iter().filter(|o| o.is_some()).count();
+        let is_full = finished == results.1.len();
         if is_full {
             full_times.push(FullTime {
                 total_time,
-                user_name: *user_name,
-                stage_times: times.map(Option::unwrap),
-                cars: cars.map(Option::unwrap),
-            });
-        } else if is_none {
-            none_times.push(*user_name);
+                user_name: results.0.as_str(),
+                stage_times: times.map(|o| o.unwrap()).collect(),
+                cars: cars.map(|o| o.unwrap()).collect(),
+            })
         } else {
             partial_times.push(PartialTime {
                 finished_stages: finished,
                 total_time,
-                user_name: *user_name,
-                stage_times: times,
-                cars,
+                user_name: results.0.as_str(),
+                stage_times: times.collect(),
+                cars: cars.collect(),
             });
         }
     }
@@ -133,22 +144,22 @@ pub fn split_times<'s>(
             .cmp(&pt1.finished_stages)
             .then(pt1.total_time.cmp(&pt2.total_time))
     });
-    (full_times, partial_times, none_times)
+    (full_times, partial_times)
 }
 
 pub fn fastest_times(
     full_times: &[FullTime],
-    user_times: &[[Option<(usize, usize)>; 6]; 3],
+    rally: &Rally,
 ) -> (Option<usize>, [Option<usize>; 6]) {
     let fastest_total = full_times.iter().map(|ft| ft.total_time).min();
     let mut fastest_per_stage = [Option::<usize>::None; 6];
-    for times in user_times {
+    for (_, times) in &rally.results {
         for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
-            let time = time.as_ref().map(|u| *u);
+            let time = time.as_ref().map(|u| u.time_ms);
             let fastest_ = fastest.as_ref().map(|u| *u);
             match (time, fastest_) {
-                (Some((t, _)), None) => *fastest = Some(t),
-                (Some((t, _)), Some(cur)) => *fastest = Some(cur.min(t)),
+                (Some(t), None) => *fastest = Some(t),
+                (Some(t), Some(cur)) => *fastest = Some(cur.min(t)),
                 (None, _) => {}
             }
         }

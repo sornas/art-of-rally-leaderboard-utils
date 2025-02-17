@@ -5,7 +5,6 @@ use crate::{format_delta, format_time, FullTime, PartialTime};
 pub fn stages(
     full_times: &[FullTime],
     partial_times: &[PartialTime],
-    none_times: &[&str],
     fastest_total: Option<usize>,
     fastest_stages: [Option<usize>; 6],
     group: Group,
@@ -55,11 +54,6 @@ pub fn stages(
             None => ["-".to_string(), String::new(), String::new()],
         }));
         drivers.push(driver);
-    }
-    for name in none_times {
-        let mut driver = vec![[name.to_string(), String::new(), String::new()]];
-        driver.extend(std::iter::repeat(["-".to_string(), String::new(), String::new()]).take(7));
-        drivers.push(driver)
     }
 
     (header, drivers)

@@ -1,36 +1,51 @@
-use std::collections::BTreeMap;
-
-use art_of_rally_leaderboard_api::{Area, Direction, Group, Weather};
+use art_of_rally_leaderboard_api::{Area, Direction, Filter, Group, Leaderboard, Stage};
 use art_of_rally_leaderboard_utils::{
-    fastest_times, format_time, get_interesting_leaderboards, split_times, table_utils, FullTime,
-    PartialTime, Rally, UserMap,
+    fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
+    table_utils, FullTime, PartialTime,
 };
 use comfy_table::{CellAlignment, Table};
 use snafu::Whatever;
 
 fn main() -> Result<(), Whatever> {
-    let (rallys, name_to_idx) = get_interesting_leaderboards()?;
+    let rallys = get_default_rallys();
+    let (platform, users) = get_default_users();
+    for rally in rallys {
+        let leaderboards: Vec<_> = rally
+            .into_iter()
+            .map(|(stage, group, weather)| Leaderboard {
+                stage,
+                weather,
+                group,
+                filter: Filter::Friends,
+                platform,
+            })
+            .collect();
+        let results = get_rally_results(&leaderboards, &users)?;
+        let (full_times, partial_times) = split_times(&results);
+        let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
 
-    for ((area, group, weather), users) in &rallys {
-        let (full_times, partial_times, none_times) = split_times(users, &name_to_idx);
-        let (fastest_total, fastest_stages) = fastest_times(&full_times, users);
-
+        // TODO: handle different area/group for each stage
+        let (
+            Stage {
+                area,
+                stage_number: _,
+                direction: _,
+            },
+            group,
+            weather,
+        ) = results.stages[0];
         println!();
         println!("{area:?} - {group:?} ({weather:?})");
         stages(
             &full_times,
             &partial_times,
-            &none_times,
             fastest_total,
             fastest_stages,
-            *group,
-            *area,
+            group,
+            area,
             Direction::Forward,
         );
     }
-
-    println!();
-    total_stages(&rallys, &name_to_idx);
 
     Ok(())
 }
@@ -38,7 +53,6 @@ fn main() -> Result<(), Whatever> {
 pub fn stages(
     full_times: &[FullTime],
     partial_times: &[PartialTime],
-    none_times: &[&str],
     fastest_total: Option<usize>,
     fastest_stages: [Option<usize>; 6],
     group: Group,
@@ -48,7 +62,6 @@ pub fn stages(
     let (header, rows) = table_utils::stages(
         full_times,
         partial_times,
-        none_times,
         fastest_total,
         fastest_stages,
         group,
@@ -66,56 +79,5 @@ pub fn stages(
         rows.iter()
             .map(|row| row.iter().map(|[s1, s2, s3]| format!("{s1}\n{s2}\n{s3}"))),
     );
-    println!("{table}");
-}
-
-pub fn total_stages(rallys: &BTreeMap<(Area, Group, Weather), Rally<6>>, name_to_idx: &UserMap) {
-    let mut table = Table::new();
-    table.load_preset(comfy_table::presets::ASCII_FULL_CONDENSED);
-    let mut header = vec!["area", "group", "weather", "total stages"];
-    header.extend(name_to_idx.keys());
-    table.set_header(header);
-    for column in table.column_iter_mut().skip(2) {
-        column.set_cell_alignment(CellAlignment::Right);
-    }
-
-    let mut rows = vec![];
-    for ((area, group, weather), users) in rallys {
-        let (full_times, partial_times, _) = split_times(users, &name_to_idx);
-
-        let stages = (full_times.len() * 6)
-            + partial_times
-                .iter()
-                .map(|pt| pt.finished_stages)
-                .sum::<usize>();
-        let mut row = vec![
-            format!("{area:?}"),
-            format!("{group:?}"),
-            format!("{weather:?}"),
-            format!("{stages}"),
-        ];
-        for user in name_to_idx.keys() {
-            if let Some(t) = full_times
-                .iter()
-                .find_map(|ft| ft.user_name.eq(*user).then_some(ft.total_time))
-            {
-                row.push(format!("{} (6)", format_time(t, true)));
-            } else if let Some((t, n)) = partial_times.iter().find_map(|pt| {
-                pt.user_name
-                    .eq(*user)
-                    .then_some((pt.total_time, pt.finished_stages))
-            }) {
-                row.push(format!("{} ({})", format_time(t, true), n));
-            } else {
-                row.push("(0)".to_string());
-            }
-        }
-        rows.push(row);
-    }
-
-    rows.sort_by(|e1, e2| e2[2].cmp(&e1[2]));
-    for row in rows {
-        table.add_row(row);
-    }
     println!("{table}");
 }

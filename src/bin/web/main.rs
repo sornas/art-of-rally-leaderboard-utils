@@ -1,6 +1,7 @@
-use art_of_rally_leaderboard_api::{Area, Direction, Group, Weather};
+use art_of_rally_leaderboard_api::{Area, Direction, Filter, Group, Leaderboard, Stage, Weather};
 use art_of_rally_leaderboard_utils::{
-    fastest_times, get_interesting_leaderboards, split_times, table_utils,
+    fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
+    table_utils,
 };
 use snafu::Whatever;
 
@@ -83,22 +84,44 @@ fn rally(
 }
 
 fn main() -> Result<(), Whatever> {
-    let (rallys, user_map) = get_interesting_leaderboards()?;
     let mut body = String::new();
-    for ((area, group, weather), users) in &rallys {
-        let (full_times, partial_times, none_times) = split_times(users, &user_map);
-        let (fastest_total, fastest_stages) = fastest_times(&full_times, users);
+    let rallys = get_default_rallys();
+    let (platform, users) = get_default_users();
+    for rally_settings in rallys {
+        let leaderboards: Vec<_> = rally_settings
+            .into_iter()
+            .map(|(stage, group, weather)| Leaderboard {
+                stage,
+                weather,
+                group,
+                filter: Filter::Friends,
+                platform,
+            })
+            .collect();
+        let results = get_rally_results(&leaderboards, &users)?;
+        let (full_times, partial_times) = split_times(&results);
+        let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
+
+        // TODO: handle different area/group for each stage
+        let (
+            Stage {
+                area,
+                stage_number: _,
+                direction: _,
+            },
+            group,
+            weather,
+        ) = results.stages[0];
         let (header, rows) = table_utils::stages(
             &full_times,
             &partial_times,
-            &none_times,
             fastest_total,
             fastest_stages,
-            *group,
-            *area,
+            group,
+            area,
             Direction::Forward,
         );
-        body += &rally(*area, *group, *weather, header, rows);
+        body += &rally(area, group, weather, header, rows);
     }
     let html = index(&body);
     println!("{html}");
