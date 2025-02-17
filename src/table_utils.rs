@@ -1,25 +1,20 @@
-use art_of_rally_leaderboard_api::{Area, Direction, Group, Stage};
+use art_of_rally_leaderboard_api::{Group, Stage, Weather};
 
 use crate::{format_delta, format_time, FullTime, PartialTime};
 
 pub fn stages(
+    stages: &[(Stage, Group, Weather)],
     full_times: &[FullTime],
     partial_times: &[PartialTime],
     fastest_total: Option<usize>,
-    fastest_stages: [Option<usize>; 6],
-    group: Group,
-    area: Area,
-    direction: Direction,
+    fastest_stages: &[Option<usize>],
 ) -> (Vec<String>, Vec<Vec<[String; 3]>>) {
     let mut header = vec!["user".to_string(), "total".to_string()];
-    header.extend((1..=6).map(|stage_number| {
-        (Stage {
-            area,
-            stage_number,
-            direction,
-        })
-        .to_string()
-    }));
+    header.extend(
+        stages
+            .iter()
+            .map(|(stage, _group, weather)| format!("{} ({})", stage, weather)),
+    );
 
     let mut drivers = Vec::new();
     for ft in full_times {
@@ -33,7 +28,7 @@ pub fn stages(
             [
                 format_time(*t, false),
                 format_delta(*t, fastest_stages[i].unwrap(), false),
-                art_of_rally_leaderboard_api::car_name(group, ft.cars[i]).to_string(),
+                art_of_rally_leaderboard_api::car_name(stages[i].1, ft.cars[i]).to_string(),
             ]
         }));
         drivers.push(driver);
@@ -45,13 +40,16 @@ pub fn stages(
             String::new(),
             String::new(),
         ]);
-        driver.extend(pt.stage_times.iter().enumerate().map(|(i, t)| match t {
-            Some(t) => [
-                format_time(*t, false),
-                format_delta(*t, fastest_stages[i].unwrap(), false),
-                art_of_rally_leaderboard_api::car_name(group, pt.cars[i].unwrap()).to_string(),
-            ],
-            None => ["-".to_string(), String::new(), String::new()],
+        driver.extend(pt.stage_times.iter().enumerate().map(|(i, t)| {
+            match t {
+                Some(t) => [
+                    format_time(*t, false),
+                    format_delta(*t, fastest_stages[i].unwrap(), false),
+                    art_of_rally_leaderboard_api::car_name(stages[i].1, pt.cars[i].unwrap())
+                        .to_string(),
+                ],
+                None => ["-".to_string(), String::new(), String::new()],
+            }
         }));
         drivers.push(driver);
     }

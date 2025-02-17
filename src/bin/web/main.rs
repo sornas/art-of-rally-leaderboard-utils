@@ -1,4 +1,4 @@
-use art_of_rally_leaderboard_api::{Area, Direction, Filter, Group, Leaderboard, Stage, Weather};
+use art_of_rally_leaderboard_api::{Filter, Leaderboard};
 use art_of_rally_leaderboard_utils::{
     fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
     table_utils,
@@ -35,13 +35,7 @@ fn index(body: &str) -> String {
     )
 }
 
-fn rally(
-    area: Area,
-    group: Group,
-    weather: Weather,
-    header: Vec<String>,
-    rows: Vec<Vec<[String; 3]>>,
-) -> String {
+fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 3]>>) -> String {
     let header_cells =
         header
             .iter()
@@ -72,7 +66,7 @@ fn rally(
 
     format!(
         r#"
-<h2>{area:?} - {group:?} ({weather:?})</h2>
+<h2>{title}</h2>
 <table>
 <thead>
 {header_cells}
@@ -87,7 +81,7 @@ fn main() -> Result<(), Whatever> {
     let mut body = String::new();
     let rallys = get_default_rallys();
     let (platform, users) = get_default_users();
-    for rally_settings in rallys {
+    for (title, rally_settings) in rallys {
         let leaderboards: Vec<_> = rally_settings
             .into_iter()
             .map(|(stage, group, weather)| Leaderboard {
@@ -102,26 +96,14 @@ fn main() -> Result<(), Whatever> {
         let (full_times, partial_times) = split_times(&results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
 
-        // TODO: handle different area/group for each stage
-        let (
-            Stage {
-                area,
-                stage_number: _,
-                direction: _,
-            },
-            group,
-            weather,
-        ) = results.stages[0];
         let (header, rows) = table_utils::stages(
+            &results.stages,
             &full_times,
             &partial_times,
             fastest_total,
-            fastest_stages,
-            group,
-            area,
-            Direction::Forward,
+            &fastest_stages,
         );
-        body += &rally(area, group, weather, header, rows);
+        body += &rally(title, header, rows);
     }
     let html = index(&body);
     println!("{html}");

@@ -19,38 +19,44 @@ pub struct StageResult {
     pub time_ms: usize,
 }
 
-pub fn get_default_rallys() -> Vec<Vec<(Stage, Group, Weather)>> {
+pub fn get_default_rallys() -> Vec<(String, Vec<(Stage, Group, Weather)>)> {
     vec![
-        [1, 2, 3, 4, 5, 6]
-            .map(|stage_number| {
-                (
-                    {
-                        Stage {
-                            area: Area::Kenya,
-                            stage_number,
-                            direction: Direction::Forward,
-                        }
-                    },
-                    Group::GroupB,
-                    Weather::Dry,
-                )
-            })
-            .to_vec(),
-        [1, 2, 3, 4, 5, 6]
-            .map(|stage_number| {
-                (
-                    {
-                        Stage {
-                            area: Area::Japan,
-                            stage_number,
-                            direction: Direction::Forward,
-                        }
-                    },
-                    Group::GroupA,
-                    Weather::Wet,
-                )
-            })
-            .to_vec(),
+        (
+            "kenya - group b".to_string(),
+            [1, 2, 3, 4, 5, 6]
+                .map(|stage_number| {
+                    (
+                        {
+                            Stage {
+                                area: Area::Kenya,
+                                stage_number,
+                                direction: Direction::Forward,
+                            }
+                        },
+                        Group::GroupB,
+                        Weather::Dry,
+                    )
+                })
+                .to_vec(),
+        ),
+        (
+            "japan - group a (wet)".to_string(),
+            [1, 2, 3, 4, 5, 6]
+                .map(|stage_number| {
+                    (
+                        {
+                            Stage {
+                                area: Area::Japan,
+                                stage_number,
+                                direction: Direction::Forward,
+                            }
+                        },
+                        Group::GroupA,
+                        Weather::Wet,
+                    )
+                })
+                .to_vec(),
+        ),
     ]
 }
 
@@ -150,9 +156,9 @@ pub fn split_times(rally: &Rally) -> (Vec<FullTime<'_>>, Vec<PartialTime<'_>>) {
 pub fn fastest_times(
     full_times: &[FullTime],
     rally: &Rally,
-) -> (Option<usize>, [Option<usize>; 6]) {
+) -> (Option<usize>, Vec<Option<usize>>) {
     let fastest_total = full_times.iter().map(|ft| ft.total_time).min();
-    let mut fastest_per_stage = [Option::<usize>::None; 6];
+    let mut fastest_per_stage = vec![Option::<usize>::None; rally.stages.len()];
     for (_, times) in &rally.results {
         for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
             let time = time.as_ref().map(|u| u.time_ms);
