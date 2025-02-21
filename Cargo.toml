@@ -16,6 +16,6 @@ snafu = "0.8.5"
 
 [dependencies.art-of-rally-leaderboard-api]
 git = "https://github.com/sornas/art-of-rally-leaderboard-api"
-branch = "names"
+rev = "9e176398fcb56bedeb33671cb8e9aa1af55546e2"
 version = "0.1.0"
 features = ["enum-iter"]
