@@ -67,8 +67,13 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
     (
         Platform::Steam,
         // TODO: map id to name some other way
-        vec![76561198230518420, 76561198087789780, 76561198062269100],
-        vec!["jonais", "Gurka", "sornas"],
+        vec![
+            76561198230518420,
+            76561198087789780,
+            76561198062269100,
+            76561198207854185,
+        ],
+        vec!["jonais", "Gurka", "sornas", "Retroducky"],
     )
 }
 
@@ -130,9 +135,7 @@ pub fn get_rally_results(
         for entry in entries {
             let world_rank = rank_by_user[idx_of_name[entry.user_name.as_str()]][i]
                 .as_ref()
-                .unwrap()
-                .as_ref()
-                .ok()
+                .and_then(|x| x.as_ref().ok())
                 .map(|rank| rank.rank);
             let for_user = rally_results
                 .entry(entry.user_name)

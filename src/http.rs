@@ -44,8 +44,7 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     progress.enable_steady_tick(Duration::from_millis(100));
 
     let mut multi = Multi::new();
-    multi.pipelining(true, true).unwrap();
-    multi.set_max_total_connections(4).unwrap();
+    multi.set_max_total_connections(1).unwrap();
     let mut handles = urls
         .iter()
         .enumerate()
@@ -73,7 +72,7 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Clone>(
                     responses[token] = match serde_json::from_str(&s) {
                         Ok(resp) => Some(Ok(resp)),
                         Err(e) => {
-                            dbg!(urls[token].as_ref(), s, e);
+                            eprintln!("{}: {} ({:?})", urls[token].as_ref(), e, s);
                             None
                         }
                     }
