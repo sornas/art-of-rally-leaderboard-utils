@@ -100,6 +100,7 @@ pub fn get_rally_results(
         .collect();
     let results = http::download_all::<Response>(&result_urls)?;
 
+    // TODO: only ask for rank of users who have a time (need to get results first)
     let rank_urls: Vec<_> = user_ids
         .iter()
         .cartesian_product(leaderboards.iter().copied().map(
