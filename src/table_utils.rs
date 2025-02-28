@@ -1,9 +1,7 @@
-use art_of_rally_leaderboard_api::{Group, Stage, Weather};
-
-use crate::{format_delta, format_time, FullTime, PartialTime};
+use crate::{FullTime, PartialTime, StageWithLeaderboard, format_delta, format_time};
 
 pub fn stages(
-    stages: &[(Stage, Group, Weather)],
+    stages: &[StageWithLeaderboard],
     full_times: &[FullTime],
     partial_times: &[PartialTime],
     fastest_total: Option<usize>,

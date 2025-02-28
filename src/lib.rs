@@ -9,8 +9,10 @@ use snafu::Whatever;
 pub mod http;
 pub mod table_utils;
 
+pub type StageWithLeaderboard = (Stage, Group, Weather);
+
 pub struct Rally {
-    pub stages: Vec<(Stage, Group, Weather)>,
+    pub stages: Vec<StageWithLeaderboard>,
     pub results: Vec<(String, Vec<Option<StageResult>>)>,
 }
 
@@ -22,7 +24,7 @@ pub struct StageResult {
     pub world_rank: Option<usize>,
 }
 
-pub fn get_default_rallys() -> Vec<(String, Vec<(Stage, Group, Weather)>)> {
+pub fn get_default_rallys() -> Vec<(String, Vec<StageWithLeaderboard>)> {
     vec![
         (
             "kenya - group b".to_string(),
@@ -78,14 +80,14 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
 }
 
 pub fn get_rally_results(
-    leaderboards: &[(Stage, Weather, Group, Platform)],
+    leaderboards: &[(StageWithLeaderboard, Platform)],
     user_ids: &[u64],
     user_names: &[&str],
 ) -> Result<Rally, Whatever> {
     let result_urls: Vec<_> = leaderboards
         .iter()
         .copied()
-        .map(|(stage, weather, group, platform)| {
+        .map(|((stage, group, weather), platform)| {
             (Leaderboard {
                 stage,
                 weather,
@@ -98,20 +100,19 @@ pub fn get_rally_results(
         .collect();
     let results = http::download_all::<Response>(&result_urls)?;
 
-    let rank_urls: Vec<_> =
-        user_ids
-            .iter()
-            .cartesian_product(leaderboards.iter().copied().map(
-                |(stage, weather, group, platform)| Leaderboard {
-                    stage,
-                    weather,
-                    group,
-                    platform,
-                    filter: Filter::PlayerRank,
-                },
-            ))
-            .map(|(user, leaderboard)| leaderboard.as_url(*user, &[]))
-            .collect();
+    let rank_urls: Vec<_> = user_ids
+        .iter()
+        .cartesian_product(leaderboards.iter().copied().map(
+            |((stage, group, weather), platform)| Leaderboard {
+                stage,
+                weather,
+                group,
+                platform,
+                filter: Filter::PlayerRank,
+            },
+        ))
+        .map(|(user, leaderboard)| leaderboard.as_url(*user, &[]))
+        .collect();
 
     #[derive(serde::Deserialize, Clone, Debug)]
     struct Rank {
@@ -153,7 +154,7 @@ pub fn get_rally_results(
         stages: leaderboards
             .iter()
             .copied()
-            .map(|(stage, weather, group, _)| (stage, group, weather))
+            .map(|(stage, _)| stage)
             .collect(),
         results: rally_results.into_iter().collect(),
     })

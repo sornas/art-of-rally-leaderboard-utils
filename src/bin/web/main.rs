@@ -88,7 +88,7 @@ fn main() -> Result<(), Whatever> {
     for (title, rally_settings) in rallys {
         let leaderboards: Vec<_> = rally_settings
             .into_iter()
-            .map(|(stage, group, weather)| (stage, weather, group, platform))
+            .map(|stage| (stage, platform))
             .collect();
         let results = get_rally_results(&leaderboards, &user_ids, &user_names)?;
         let (full_times, partial_times) = split_times(&results);
