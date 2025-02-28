@@ -44,6 +44,7 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Clone>(
     progress.enable_steady_tick(Duration::from_millis(100));
 
     let mut multi = Multi::new();
+    multi.set_max_total_connections(1).unwrap();
     let mut handles = urls
         .iter()
         .enumerate()
@@ -68,8 +69,13 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Clone>(
                 Ok(()) => {
                     let _status = handle.response_code().unwrap();
                     let s = String::from_utf8(std::mem::take(&mut handle.get_mut().0)).unwrap();
-                    let resp = serde_json::from_str(&s).unwrap();
-                    responses[token] = Some(Ok(resp));
+                    responses[token] = match serde_json::from_str(&s) {
+                        Ok(resp) => Some(Ok(resp)),
+                        Err(e) => {
+                            progress.println(format!("{}: {} ({:?})", urls[token].as_ref(), e, s));
+                            None
+                        }
+                    }
                 }
                 Err(e) => {
                     responses[token] = Some(Err(e).with_whatever_context(|_| {
