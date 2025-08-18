@@ -75,7 +75,7 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
             76561198062269100,
             76561198207854185,
         ],
-        vec!["jonais", "Gurka", "sornas", "Retroducky"],
+        vec!["sorcierducul212", "Gurka", "sornas", "Retroducky"],
     )
 }
 
@@ -135,7 +135,12 @@ pub fn get_rally_results(
         let response = response.unwrap().unwrap();
         let entries = response.leaderboard;
         for entry in entries {
-            let world_rank = rank_by_user[idx_of_name[entry.user_name.as_str()]][i]
+            let user_name = entry.user_name.as_str();
+            let user_idx = idx_of_name
+                .get(user_name)
+                .unwrap_or_else(|| panic!("unknown username: {user_name}"));
+            let user_rank = rank_by_user.get(*user_idx).unwrap();
+            let user_world_rank = user_rank[i]
                 .as_ref()
                 .and_then(|x| x.as_ref().ok())
                 .map(|rank| rank.rank);
@@ -146,7 +151,7 @@ pub fn get_rally_results(
                 car: entry.car_id,
                 time_ms: entry.score,
                 local_rank: entry.rank,
-                world_rank,
+                world_rank: user_world_rank,
             })
         }
     }
