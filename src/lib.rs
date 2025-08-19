@@ -44,24 +44,24 @@ pub fn get_default_rallys() -> Vec<(String, Vec<StageWithLeaderboard>)> {
                 })
                 .to_vec(),
         ),
-        // (
-        //     "japan - group a (wet)".to_string(),
-        //     [1, 2, 3, 4, 5, 6]
-        //         .map(|stage_number| {
-        //             (
-        //                 {
-        //                     Stage {
-        //                         area: Area::Japan,
-        //                         stage_number,
-        //                         direction: Direction::Forward,
-        //                     }
-        //                 },
-        //                 Group::GroupA,
-        //                 Weather::Wet,
-        //             )
-        //         })
-        //         .to_vec(),
-        // ),
+        (
+            "norway - group 4".to_string(),
+            [1, 2, 3, 4, 5, 6]
+                .map(|stage_number| {
+                    (
+                        {
+                            Stage {
+                                area: Area::Norway,
+                                stage_number,
+                                direction: Direction::Forward,
+                            }
+                        },
+                        Group::Eighties,
+                        Weather::Dry,
+                    )
+                })
+                .to_vec(),
+        ),
     ]
 }
 
