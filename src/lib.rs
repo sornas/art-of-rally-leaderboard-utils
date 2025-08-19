@@ -74,8 +74,9 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
             76561198087789780,
             76561198062269100,
             76561198207854185,
+            76561198049071819,
         ],
-        vec!["sorcierducul212", "Gurka", "sornas", "Retroducky"],
+        vec!["sorcierducul212", "Gurka", "sornas", "Retroducky", "emiluren"],
     )
 }
 
