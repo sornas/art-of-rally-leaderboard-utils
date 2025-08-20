@@ -3,35 +3,36 @@ use art_of_rally_leaderboard_utils::{
     table_utils,
 };
 use snafu::Whatever;
+use unindent::unindent;
 
 fn index(body: &str) -> String {
     let updated = chrono::Utc::now().format("%F %R %Z");
-    format!(
+    unindent(&format!(
         r#"
-<!DOCTYPE html>
-<html>
+            <!DOCTYPE html>
+            <html>
 
-<head>
-  <link rel="stylesheet" href="/style.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,200..800;1,200..800&display=swap"
-    rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap"
-    rel="stylesheet">
-</head>
+            <head>
+            <link rel="stylesheet" href="/style.css" />
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link
+                href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,200..800;1,200..800&display=swap"
+                rel="stylesheet">
+            <link href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap"
+                rel="stylesheet">
+            </head>
 
 
-<body>
-<h1>basvektorernas art of rally-leaderboard</h1>
-{body}
+            <body>
+            <h1>basvektorernas art of rally-leaderboard</h1>
+            {body}
 
-<p>last updated: {updated}</p>
-</body>
-</html>
+            <p>last updated: {updated}</p>
+            </body>
+            </html>
     "#
-    )
+    ))
 }
 
 fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 4]>>) -> String {
@@ -68,17 +69,17 @@ fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 4]>>) -> Str
         driver_rows += "</tr>\n";
     }
 
-    format!(
+    unindent(&format!(
         r#"
-<h2>{title}</h2>
-<table>
-<thead>
-{header_cells}
-</thead>
-{driver_rows}
-</table>
-    "#
-    )
+            <h2>{title}</h2>
+            <table>
+            <thead>
+            {header_cells}
+            </thead>
+            {driver_rows}
+            </table>
+        "#
+    ))
 }
 
 fn main() -> Result<(), Whatever> {

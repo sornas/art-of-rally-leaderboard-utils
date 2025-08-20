@@ -13,6 +13,7 @@ pub fn stages(
             .iter()
             .map(|(stage, _group, weather)| format!("{} ({})", stage, weather)),
     );
+    let num_cols = header.len();
 
     let mut drivers = Vec::new();
     for ft in full_times {
@@ -77,6 +78,10 @@ pub fn stages(
                     None => ["-".to_string(), String::new(), String::new(), String::new()],
                 }
             },
+        ));
+        driver.extend(std::iter::repeat_n(
+            ["-".to_string(), String::new(), String::new(), String::new()],
+            num_cols - driver.len(),
         ));
         drivers.push(driver);
     }

@@ -26,35 +26,31 @@ pub struct StageResult {
 
 pub fn get_default_rallys() -> Vec<(String, Vec<StageWithLeaderboard>)> {
     vec![
-        (
-            "kenya - group b".to_string(),
-            [1, 2, 3, 4, 5, 6]
-                .map(|stage_number| {
-                    (
-                        {
-                            Stage {
-                                area: Area::Kenya,
-                                stage_number,
-                                direction: Direction::Forward,
-                            }
-                        },
-                        Group::GroupB,
-                        Weather::Dry,
-                    )
-                })
-                .to_vec(),
-        ),
+        // (
+        //     "kenya - group b".to_string(),
+        //     [1, 2, 3, 4, 5, 6]
+        //         .map(|stage_number| {
+        //             (
+        //                 Stage {
+        //                     area: Area::Kenya,
+        //                     stage_number,
+        //                     direction: Direction::Forward,
+        //                 },
+        //                 Group::GroupB,
+        //                 Weather::Dry,
+        //             )
+        //         })
+        //         .to_vec(),
+        // ),
         (
             "norway - group 4".to_string(),
             [1, 2, 3, 4, 5, 6]
                 .map(|stage_number| {
                     (
-                        {
-                            Stage {
-                                area: Area::Norway,
-                                stage_number,
-                                direction: Direction::Forward,
-                            }
+                        Stage {
+                            area: Area::Norway,
+                            stage_number,
+                            direction: Direction::Forward,
                         },
                         Group::Eighties,
                         Weather::Dry,
@@ -143,6 +139,7 @@ pub fn get_rally_results(
         let entries = response.leaderboard;
         for entry in entries {
             let user_name = entry.user_name.as_str();
+            // TODO: figure out username from ID?
             let Some(user_idx) = idx_of_name.get(user_name) else {
                 eprintln!("unknown username: {user_name}");
                 continue;
