@@ -81,7 +81,7 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
             "Gurka",
             "sornas",
             "Retroducky",
-            "emiluren",
+            "Emiluren",
         ],
     )
 }
