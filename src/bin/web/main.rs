@@ -35,7 +35,7 @@ fn index(body: &str) -> String {
     ))
 }
 
-fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 4]>>) -> String {
+fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 5]>>) -> String {
     let header_cells =
         header
             .iter()
@@ -47,6 +47,7 @@ fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 4]>>) -> Str
 
     let mut driver_rows = String::new();
     for row in rows {
+        // TODO: structure this
         driver_rows += "<tr class=\"times\">\n";
         for cell in row.iter().map(|s| &s[0]) {
             driver_rows += &format!("<td>{cell}</td>\n");
@@ -64,6 +65,11 @@ fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 4]>>) -> Str
         driver_rows += "</tr>\n";
         driver_rows += "<tr class=\"ranks\">\n";
         for cell in row.iter().map(|s| &s[3]) {
+            driver_rows += &format!("<td>{cell}</td>\n");
+        }
+        driver_rows += "</tr>\n";
+        driver_rows += "<tr class=\"deltas-percent\">\n";
+        for cell in row.iter().map(|s| &s[4]) {
             driver_rows += &format!("<td>{cell}</td>\n");
         }
         driver_rows += "</tr>\n";

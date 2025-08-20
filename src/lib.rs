@@ -261,23 +261,3 @@ pub fn fastest_times(
     }
     (fastest_total, fastest_per_stage)
 }
-
-pub fn format_time(ms: usize, long: bool) -> String {
-    let minutes = ms / 1000 / 60;
-    let seconds = (ms / 1000) % 60;
-    let millis = ms % 1000;
-    if long {
-        format!("{minutes:02}:{seconds:02}.{millis:03}")
-    } else {
-        format!("{minutes:01}:{seconds:02}.{millis:03}")
-    }
-}
-
-pub fn format_delta(ms: usize, fast: usize, long: bool) -> String {
-    assert!(ms >= fast);
-    if ms == fast {
-        "         ".to_string()
-    } else {
-        format!("+{}", format_time(ms - fast, long))
-    }
-}
