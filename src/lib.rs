@@ -26,22 +26,22 @@ pub struct StageResult {
 
 pub fn get_default_rallys() -> Vec<(String, Vec<StageWithLeaderboard>)> {
     vec![
-        // (
-        //     "kenya - group b".to_string(),
-        //     [1, 2, 3, 4, 5, 6]
-        //         .map(|stage_number| {
-        //             (
-        //                 Stage {
-        //                     area: Area::Kenya,
-        //                     stage_number,
-        //                     direction: Direction::Forward,
-        //                 },
-        //                 Group::GroupB,
-        //                 Weather::Dry,
-        //             )
-        //         })
-        //         .to_vec(),
-        // ),
+        (
+            "kenya - group b".to_string(),
+            [1, 2, 3, 4, 5, 6]
+                .map(|stage_number| {
+                    (
+                        Stage {
+                            area: Area::Kenya,
+                            stage_number,
+                            direction: Direction::Forward,
+                        },
+                        Group::GroupB,
+                        Weather::Dry,
+                    )
+                })
+                .to_vec(),
+        ),
         (
             "norway - group 4".to_string(),
             [1, 2, 3, 4, 5, 6]
