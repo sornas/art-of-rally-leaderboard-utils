@@ -71,13 +71,15 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
             76561198062269100,
             76561198207854185,
             76561198049071819,
+            76561197996901884,
         ],
         vec![
             "rumpatrollkarl212",
-            "Gurka",
+            "♿Gurka♿",
             "sornas",
             "Retroducky",
             "Emiluren",
+            "Comonoid [ON-BAS]",
         ],
     )
 }
