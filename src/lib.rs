@@ -4,6 +4,7 @@ use art_of_rally_leaderboard_api::{
     Area, Direction, Filter, Group, Leaderboard, Platform, Response, Stage, Weather,
 };
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use snafu::Whatever;
 
 pub mod http;
@@ -73,14 +74,7 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
             76561198049071819,
             76561197996901884,
         ],
-        vec![
-            "rumpatrollkarl212",
-            "♿Gurka♿",
-            "sornas",
-            "Retroducky",
-            "Emiluren",
-            "Comonoid [ON-BAS]",
-        ],
+        vec!["Johan B", "Martin", "Gustav", "Beatrice", "Emil", "Frans"],
     )
 }
 
@@ -103,9 +97,9 @@ pub fn get_rally_results(
             .as_url(user_ids[0], &user_ids[1..])
         })
         .collect();
-    let results = http::download_all::<Response>(&result_urls)?;
+    let leaderboard_results = http::download_all::<Response>(&result_urls)?;
 
-    // TODO: only ask for rank of users who have a time (need to get results first)
+    // TODO: only ask for rank of users who have a time
     let rank_urls: Vec<_> = user_ids
         .iter()
         .cartesian_product(leaderboards.iter().copied().map(
@@ -120,45 +114,47 @@ pub fn get_rally_results(
         .map(|(user, leaderboard)| leaderboard.as_url(*user, &[]))
         .collect();
 
-    #[derive(serde::Deserialize, Clone, Debug)]
+    #[derive(Serialize, Deserialize, Clone, Debug)]
     struct Rank {
         #[serde(rename = "result")]
         _result: i32,
         rank: usize,
     }
+
+    // World rank, in the same order we asked for (so users x leaderboard: [(user1, board1), (user1, board2), ..., (user2, board1), ...])
     let ranks = http::download_all::<Rank>(&rank_urls)?;
-    let rank_by_user: Vec<_> = ranks.chunks_exact(leaderboards.len()).collect();
-    let idx_of_name: BTreeMap<_, _> = user_names
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(a, b)| (b, a))
-        .collect();
+    // If we chunk by number of leaderboards we get chunks per user.
+    let world_rank_by_user: Vec<_> = ranks.chunks_exact(leaderboards.len()).collect();
 
     let mut rally_results: BTreeMap<String, Vec<Option<StageResult>>> = BTreeMap::new();
-    for (i, response) in results.into_iter().enumerate() {
-        let response = response.unwrap().unwrap();
-        let entries = response.leaderboard;
+    for (leaderboard_idx, leaderboard) in leaderboard_results.into_iter().enumerate() {
+        let mut entries = leaderboard.unwrap().unwrap().leaderboard;
+
+        // We don't know which user id is which user! But we know the relative
+        // ranking of usernames (LeaderboardEntry), and the world rank for each
+        // user (world_rank_by_user). Sort the entries by local rank, and lookup
+        // the name (and world rank) from the corresponding (ranking-relative)
+        // world rank.
+
+        entries.sort_by_key(|entry| entry.rank);
+
+        let mut sorted_world_ranks = world_rank_by_user
+            .iter()
+            .flat_map(|user_ranks| user_ranks.get(leaderboard_idx).unwrap())
+            .zip(user_names)
+            .filter_map(|(rank, name)| rank.as_ref().ok().map(|rank| (rank.rank, name)))
+            .sorted_by_key(|(rank, _name)| *rank);
+
         for entry in entries {
-            let user_name = entry.user_name.as_str();
-            // TODO: figure out username from ID?
-            let Some(user_idx) = idx_of_name.get(user_name) else {
-                eprintln!("unknown username: {user_name}");
-                continue;
-            };
-            let user_rank = rank_by_user.get(*user_idx).unwrap();
-            let user_world_rank = user_rank[i]
-                .as_ref()
-                .and_then(|x| x.as_ref().ok())
-                .map(|rank| rank.rank);
-            let for_user = rally_results
-                .entry(entry.user_name)
+            let (world_rank, name) = sorted_world_ranks.next().unwrap();
+            let entry_for_user = rally_results
+                .entry(name.to_string())
                 .or_insert_with(|| vec![Option::None; leaderboards.len()]);
-            for_user[i] = Some(StageResult {
+            entry_for_user[leaderboard_idx] = Some(StageResult {
                 car: entry.car_id,
                 time_ms: entry.score,
                 local_rank: entry.rank,
-                world_rank: user_world_rank,
+                world_rank: Some(world_rank),
             })
         }
     }
