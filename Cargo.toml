@@ -9,13 +9,15 @@ comfy-table = { version = "7.1.4", default-features = false }
 curl = "0.4.47"
 indicatif = "0.17.11"
 itertools = "0.14.0"
+md5 = "0.8.0"
 rayon = "1.10.0"
-serde = "1.0.217"
+serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.138"
 snafu = "0.8.5"
+unindent = "0.2.4"
 
 [dependencies.art-of-rally-leaderboard-api]
 git = "https://github.com/sornas/art-of-rally-leaderboard-api"
-rev = "9e176398fcb56bedeb33671cb8e9aa1af55546e2"
+rev = "8cf8cd77ce5ff9c00b74003a055234dd8619eb33"
 version = "0.1.0"
 features = ["enum-iter"]

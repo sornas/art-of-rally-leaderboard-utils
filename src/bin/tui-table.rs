@@ -1,26 +1,16 @@
-use art_of_rally_leaderboard_api::{Filter, Group, Leaderboard, Stage, Weather};
 use art_of_rally_leaderboard_utils::{
-    fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
-    table_utils, FullTime, PartialTime,
+    FullTime, PartialTime, StageWithLeaderboard, fastest_times, get_default_rallys,
+    get_default_users, get_rally_results, split_times, table_utils,
 };
 use comfy_table::{CellAlignment, Table};
 use snafu::Whatever;
 
 fn main() -> Result<(), Whatever> {
     let rallys = get_default_rallys();
-    let (platform, users) = get_default_users();
+    let (platform, user_ids, user_names) = get_default_users();
     for (title, rally) in rallys {
-        let leaderboards: Vec<_> = rally
-            .into_iter()
-            .map(|(stage, group, weather)| Leaderboard {
-                stage,
-                weather,
-                group,
-                filter: Filter::Friends,
-                platform,
-            })
-            .collect();
-        let results = get_rally_results(&leaderboards, &users)?;
+        let leaderboards: Vec<_> = rally.into_iter().map(|stage| (stage, platform)).collect();
+        let results = get_rally_results(&leaderboards, &user_ids, &user_names)?;
         let (full_times, partial_times) = split_times(&results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
 
@@ -38,7 +28,7 @@ fn main() -> Result<(), Whatever> {
 }
 
 pub fn stages(
-    stages: &[(Stage, Group, Weather)],
+    stages: &[StageWithLeaderboard],
     full_times: &[FullTime],
     partial_times: &[PartialTime],
     fastest_total: Option<usize>,
@@ -60,7 +50,7 @@ pub fn stages(
     }
     table.add_rows(
         rows.iter()
-            .map(|row| row.iter().map(|[s1, s2, s3]| format!("{s1}\n{s2}\n{s3}"))),
+            .map(|row| row.iter().map(|lines| lines.join("\n"))),
     );
     println!("{table}");
 }

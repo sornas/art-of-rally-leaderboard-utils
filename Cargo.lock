@@ -20,7 +20,7 @@ dependencies = [
 [[package]]
 name = "art-of-rally-leaderboard-api"
 version = "0.1.0"
-source = "git+https://github.com/sornas/art-of-rally-leaderboard-api?rev=9e176398fcb56bedeb33671cb8e9aa1af55546e2#9e176398fcb56bedeb33671cb8e9aa1af55546e2"
+source = "git+https://github.com/sornas/art-of-rally-leaderboard-api?rev=8cf8cd77ce5ff9c00b74003a055234dd8619eb33#8cf8cd77ce5ff9c00b74003a055234dd8619eb33"
 dependencies = [
  "serde",
  "strum",
@@ -36,10 +36,12 @@ dependencies = [
  "curl",
  "indicatif",
  "itertools",
+ "md5",
  "rayon",
  "serde",
  "serde_json",
  "snafu",
+ "unindent",
 ]
 
 [[package]]
@@ -269,6 +271,12 @@ name = "log"
 version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
+
+[[package]]
+name = "md5"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
 name = "memchr"
@@ -505,6 +513,12 @@ name = "unicode-width"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
+
+[[package]]
+name = "unindent"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "vcpkg"
