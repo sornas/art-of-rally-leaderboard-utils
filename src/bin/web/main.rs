@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use art_of_rally_leaderboard_api::car_name;
 use art_of_rally_leaderboard_utils::{
     Rally, fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
@@ -6,7 +8,10 @@ use art_of_rally_leaderboard_utils::{
 use maud::{PreEscaped, html};
 use snafu::Whatever;
 
-fn index(body: impl IntoIterator<Item = PreEscaped<String>>) -> PreEscaped<String> {
+fn html_page<'a>(
+    header: &str,
+    body: impl IntoIterator<Item = &'a PreEscaped<String>>,
+) -> PreEscaped<String> {
     html!(
         (maud::DOCTYPE)
         html {
@@ -19,7 +24,7 @@ fn index(body: impl IntoIterator<Item = PreEscaped<String>>) -> PreEscaped<Strin
             }
 
             body {
-                h1 { "basvektorernas art of rally-leaderboard" }
+                h1 { (header) }
 
                 @for part in body {
                     (part)
@@ -37,6 +42,7 @@ fn main() -> Result<(), Whatever> {
     let rallys = get_default_rallys();
     let (platform, user_ids, user_names) = get_default_users();
     let mut parts = Vec::new();
+    let mut pages: BTreeMap<String, Vec<_>> = BTreeMap::new();
 
     for Rally { title, stages } in rallys {
         let leaderboards: Vec<_> = stages.iter().map(|stage| (*stage, platform)).collect();
@@ -58,7 +64,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for ft in &full_times {
                     tr {
-                        td { (ft.user_name) }
+                        td {a href=(format!("/{}", ft.user_name.to_lowercase().replace(" ", "-"))) { (ft.user_name) } }
                         td { }
                         @let total = ft.total_time;
                         @let fastest_total = fastest_total.unwrap();
@@ -79,7 +85,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for pt in &partial_times {
                     tr {
-                        td { (pt.user_name) }
+                        td {a href=(format!("/{}", pt.user_name.to_lowercase().replace(" ", "-"))) { (pt.user_name) } }
                         td { "*" }
                         @let total = pt.total_time;
                         td { (format_time(total, true)) }
@@ -102,9 +108,8 @@ fn main() -> Result<(), Whatever> {
 
         // For each driver, in-depth stats for each stage
         for driver in results.driver_results {
-            parts.push(html!(
-                // TODO: link target
-                h3 { (driver.name) }
+            pages.entry(driver.name).or_default().push(html!(
+                h2 { (title) }
                 table class="driver" {
                     thead {
                         th { "stage" }
@@ -140,7 +145,17 @@ fn main() -> Result<(), Whatever> {
         }
     }
 
-    let html = index(parts).into_string();
-    println!("{html}");
+    std::fs::write(
+        "public/index.html",
+        html_page("basvektorernas art of rally-leaderboard", &parts).into_string(),
+    )
+    .unwrap();
+    for (user, parts) in &pages {
+        std::fs::write(
+            format!("public/{}.html", user.to_lowercase().replace(" ", "-")),
+            html_page(user.as_str(), parts).into_string(),
+        )
+        .unwrap();
+    }
     Ok(())
 }
