@@ -64,7 +64,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for ft in &full_times {
                     tr {
-                        td {a href=(format!("/{}", ft.user_name.to_lowercase().replace(" ", "-"))) { (ft.user_name) } }
+                        td {a href=(format!("/{}.html", ft.user_name.to_lowercase().replace(" ", "-"))) { (ft.user_name) } }
                         td { }
                         @let total = ft.total_time;
                         @let fastest_total = fastest_total.unwrap();
@@ -85,7 +85,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for pt in &partial_times {
                     tr {
-                        td {a href=(format!("/{}", pt.user_name.to_lowercase().replace(" ", "-"))) { (pt.user_name) } }
+                        td {a href=(format!("/{}.html", pt.user_name.to_lowercase().replace(" ", "-"))) { (pt.user_name) } }
                         td { "*" }
                         @let total = pt.total_time;
                         td { (format_time(total, true)) }
