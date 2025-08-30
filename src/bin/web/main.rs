@@ -1,5 +1,5 @@
 use art_of_rally_leaderboard_utils::{
-    fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
+    Rally, fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
     table_utils,
 };
 use maud::{PreEscaped, html};
@@ -57,11 +57,8 @@ fn main() -> Result<(), Whatever> {
     let mut body = Vec::new();
     let rallys = get_default_rallys();
     let (platform, user_ids, user_names) = get_default_users();
-    for (title, rally_settings) in rallys {
-        let leaderboards: Vec<_> = rally_settings
-            .into_iter()
-            .map(|stage| (stage, platform))
-            .collect();
+    for Rally { title, stages } in rallys {
+        let leaderboards: Vec<_> = stages.into_iter().map(|stage| (stage, platform)).collect();
         let results = get_rally_results(&leaderboards, &user_ids, &user_names)?;
         let (full_times, partial_times) = split_times(&results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);

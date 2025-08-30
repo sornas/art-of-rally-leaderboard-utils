@@ -13,8 +13,18 @@ pub mod table_utils;
 pub type StageWithLeaderboard = (Stage, Group, Weather);
 
 pub struct Rally {
+    pub title: String,
     pub stages: Vec<StageWithLeaderboard>,
-    pub results: Vec<(String, Vec<Option<StageResult>>)>,
+}
+
+pub struct DriverResult {
+    pub name: String,
+    pub stages: Vec<Option<StageResult>>,
+}
+
+pub struct RallyResults {
+    pub stages: Vec<StageWithLeaderboard>,
+    pub driver_results: Vec<DriverResult>,
 }
 
 #[derive(Clone)]
@@ -25,11 +35,11 @@ pub struct StageResult {
     pub world_rank: Option<usize>,
 }
 
-pub fn get_default_rallys() -> Vec<(String, Vec<StageWithLeaderboard>)> {
+pub fn get_default_rallys() -> Vec<Rally> {
     vec![
-        (
-            "kenya - group b".to_string(),
-            [1, 2, 3, 4, 5, 6]
+        Rally {
+            title: "kenya - group b".to_string(),
+            stages: [1, 2, 3, 4, 5, 6]
                 .map(|stage_number| {
                     (
                         Stage {
@@ -42,10 +52,10 @@ pub fn get_default_rallys() -> Vec<(String, Vec<StageWithLeaderboard>)> {
                     )
                 })
                 .to_vec(),
-        ),
-        (
-            "norway - group 4".to_string(),
-            [1, 2, 3, 4, 5, 6]
+        },
+        Rally {
+            title: "norway - group 4".to_string(),
+            stages: [1, 2, 3, 4, 5, 6]
                 .map(|stage_number| {
                     (
                         Stage {
@@ -58,14 +68,13 @@ pub fn get_default_rallys() -> Vec<(String, Vec<StageWithLeaderboard>)> {
                     )
                 })
                 .to_vec(),
-        ),
+        },
     ]
 }
 
 pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
     (
         Platform::Steam,
-        // TODO: map id to name some other way
         vec![
             76561198230518420,
             76561198087789780,
@@ -77,7 +86,9 @@ pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
             76561198052484118,
             76561198857520448,
         ],
-        vec!["Johan B", "Martin", "Gustav", "Beatrice", "Emil", "Frans", "Anton", "Leo", "Jonatan"],
+        vec![
+            "Johan B", "Martin", "Gustav", "Beatrice", "Emil", "Frans", "Anton", "Leo", "Jonatan",
+        ],
     )
 }
 
@@ -85,7 +96,7 @@ pub fn get_rally_results(
     leaderboards: &[(StageWithLeaderboard, Platform)],
     user_ids: &[u64],
     user_names: &[&str],
-) -> Result<Rally, Whatever> {
+) -> Result<RallyResults, Whatever> {
     let result_urls: Vec<_> = leaderboards
         .iter()
         .copied()
@@ -129,8 +140,8 @@ pub fn get_rally_results(
     // If we chunk by number of leaderboards we get chunks per user.
     let world_rank_by_user: Vec<_> = ranks.chunks_exact(leaderboards.len()).collect();
 
-    let mut rally_results: BTreeMap<String, Vec<Option<StageResult>>> = BTreeMap::new();
-    for (leaderboard_idx, leaderboard) in leaderboard_results.into_iter().enumerate() {
+    let mut driver_results: BTreeMap<String, Vec<Option<StageResult>>> = BTreeMap::new();
+    for (stage_idx, leaderboard) in leaderboard_results.into_iter().enumerate() {
         let mut entries = leaderboard.unwrap().unwrap().leaderboard;
 
         // We don't know which user id is which user! But we know the relative
@@ -143,17 +154,17 @@ pub fn get_rally_results(
 
         let mut sorted_world_ranks = world_rank_by_user
             .iter()
-            .flat_map(|user_ranks| user_ranks.get(leaderboard_idx).unwrap())
+            .flat_map(|user_ranks| user_ranks.get(stage_idx).unwrap())
             .zip(user_names)
             .filter_map(|(rank, name)| rank.as_ref().ok().map(|rank| (rank.rank, name)))
             .sorted_by_key(|(rank, _name)| *rank);
 
         for entry in entries {
             let (world_rank, name) = sorted_world_ranks.next().unwrap();
-            let entry_for_user = rally_results
+            let entry_for_user = driver_results
                 .entry(name.to_string())
                 .or_insert_with(|| vec![Option::None; leaderboards.len()]);
-            entry_for_user[leaderboard_idx] = Some(StageResult {
+            entry_for_user[stage_idx] = Some(StageResult {
                 car: entry.car_id,
                 time_ms: entry.score,
                 local_rank: entry.rank,
@@ -162,13 +173,16 @@ pub fn get_rally_results(
         }
     }
 
-    Ok(Rally {
+    Ok(RallyResults {
         stages: leaderboards
             .iter()
             .copied()
             .map(|(stage, _)| stage)
             .collect(),
-        results: rally_results.into_iter().collect(),
+        driver_results: driver_results
+            .into_iter()
+            .map(|(name, stages)| DriverResult { name, stages })
+            .collect(),
     })
 }
 
@@ -191,31 +205,34 @@ pub struct PartialTime<'s> {
     pub cars: Vec<Option<usize>>,
 }
 
-pub fn split_times(rally: &Rally) -> (Vec<FullTime<'_>>, Vec<PartialTime<'_>>) {
+pub fn split_times(rally: &RallyResults) -> (Vec<FullTime<'_>>, Vec<PartialTime<'_>>) {
     let mut full_times = Vec::new();
     let mut partial_times = Vec::new();
 
-    for results in rally.results.iter() {
-        let times = results
-            .1
+    for driver in rally.driver_results.iter() {
+        let times = driver
+            .stages
             .iter()
             .map(|o| o.as_ref().map(|stage| stage.time_ms));
-        let cars = results.1.iter().map(|o| o.as_ref().map(|stage| stage.car));
-        let local_rank = results
-            .1
+        let cars = driver
+            .stages
+            .iter()
+            .map(|o| o.as_ref().map(|stage| stage.car));
+        let local_rank = driver
+            .stages
             .iter()
             .map(|o| o.as_ref().map(|stage| stage.local_rank));
-        let world_rank = results
-            .1
+        let world_rank = driver
+            .stages
             .iter()
             .map(|o| o.as_ref().map(|stage| stage.world_rank));
         let total_time: usize = times.clone().flatten().sum();
-        let finished = results.1.iter().filter(|o| o.is_some()).count();
-        let is_full = finished == results.1.len();
+        let finished = driver.stages.iter().filter(|o| o.is_some()).count();
+        let is_full = finished == driver.stages.len();
         if is_full {
             full_times.push(FullTime {
                 total_time,
-                user_name: results.0.as_str(),
+                user_name: driver.name.as_str(),
                 stage_times: times.map(|o| o.unwrap()).collect(),
                 local_rank: local_rank.map(|o| o.unwrap()).collect(),
                 world_rank: world_rank.map(|o| o.unwrap()).collect(),
@@ -225,7 +242,7 @@ pub fn split_times(rally: &Rally) -> (Vec<FullTime<'_>>, Vec<PartialTime<'_>>) {
             partial_times.push(PartialTime {
                 finished_stages: finished,
                 total_time,
-                user_name: results.0.as_str(),
+                user_name: driver.name.as_str(),
                 stage_times: times.collect(),
                 local_rank: local_rank.collect(),
                 world_rank: world_rank.flatten().collect(),
@@ -245,17 +262,21 @@ pub fn split_times(rally: &Rally) -> (Vec<FullTime<'_>>, Vec<PartialTime<'_>>) {
 
 pub fn fastest_times(
     full_times: &[FullTime],
-    rally: &Rally,
+    rally: &RallyResults,
 ) -> (Option<usize>, Vec<Option<usize>>) {
     let fastest_total = full_times.iter().map(|ft| ft.total_time).min();
     let mut fastest_per_stage = vec![Option::<usize>::None; rally.stages.len()];
-    for (_, times) in &rally.results {
-        for (time, fastest) in times.iter().zip(fastest_per_stage.iter_mut()) {
+    for driver_result in &rally.driver_results {
+        for (time, fastest_time) in driver_result
+            .stages
+            .iter()
+            .zip(fastest_per_stage.iter_mut())
+        {
             let time = time.as_ref().map(|u| u.time_ms);
-            let fastest_ = fastest.as_ref().map(|u| *u);
+            let fastest_ = fastest_time.as_ref().map(|u| *u);
             match (time, fastest_) {
-                (Some(t), None) => *fastest = Some(t),
-                (Some(t), Some(cur)) => *fastest = Some(cur.min(t)),
+                (Some(t), None) => *fastest_time = Some(t),
+                (Some(t), Some(cur)) => *fastest_time = Some(cur.min(t)),
                 (None, _) => {}
             }
         }
