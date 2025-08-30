@@ -2,94 +2,59 @@ use art_of_rally_leaderboard_utils::{
     fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
     table_utils,
 };
+use maud::{PreEscaped, html};
 use snafu::Whatever;
-use unindent::unindent;
 
-fn index(body: &str) -> String {
+fn index(body: &[PreEscaped<String>]) -> PreEscaped<String> {
     let updated = chrono::Utc::now().format("%F %R %Z");
-    unindent(&format!(
-        r#"
-            <!DOCTYPE html>
-            <html>
+    html!(
+        (maud::DOCTYPE)
+        html {
+            head {
+                link rel="stylesheet" href="/style.css";
+                link rel="preconnect" href="https://fonts.googleapis.com";
+                link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
+                link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,200..800;1,200..800&display=swap";
+                link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap";
+            }
 
-            <head>
-            <link rel="stylesheet" href="/style.css" />
-            <link rel="preconnect" href="https://fonts.googleapis.com">
-            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-            <link
-                href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,200..800;1,200..800&display=swap"
-                rel="stylesheet">
-            <link href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap"
-                rel="stylesheet">
-            </head>
+            body {
+                h1 { "basvektorernas art of rally-leaderboard" }
 
+                @for part in body {
+                    (part)
+                }
 
-            <body>
-            <h1>basvektorernas art of rally-leaderboard</h1>
-            {body}
-
-            <p>last updated: {updated}</p>
-            </body>
-            </html>
-    "#
-    ))
+                p {
+                    "last updated: " (updated)
+                }
+            }
+        }
+    )
 }
 
-fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 5]>>) -> String {
-    let header_cells =
-        header
-            .iter()
-            .map(|s| format!("<th>{s}</th>\n"))
-            .fold(String::new(), |mut cur, nxt| {
-                cur += &nxt;
-                cur
-            });
-
-    let mut driver_rows = String::new();
-    for row in rows {
-        // TODO: structure this
-        driver_rows += "<tr class=\"times\">\n";
-        for cell in row.iter().map(|s| &s[0]) {
-            driver_rows += &format!("<td>{cell}</td>\n");
+fn rally(title: String, header: Vec<String>, rows: Vec<Vec<[String; 5]>>) -> PreEscaped<String> {
+    html!(
+        h2 { (title) }
+        table {
+            thead {
+                @for h in header {
+                    th { (h) }
+                }
+            }
+            @for row in rows {
+                tr class="times"         { @for cell in &row { td { (cell[0]) } } }
+                tr class="deltas"        { @for cell in &row { td { (cell[1]) } } }
+                tr class="cars"          { @for cell in &row { td { (cell[2]) } } }
+                tr class="ranks"         { @for cell in &row { td { (cell[3]) } } }
+                tr class="delta-percent" { @for cell in &row { td { (cell[4]) } } }
+            }
         }
-        driver_rows += "</tr>\n";
-        driver_rows += "<tr class=\"deltas\">\n";
-        for cell in row.iter().map(|s| &s[1]) {
-            driver_rows += &format!("<td>{cell}</td>\n");
-        }
-        driver_rows += "</tr>\n";
-        driver_rows += "<tr class=\"cars\">\n";
-        for cell in row.iter().map(|s| &s[2]) {
-            driver_rows += &format!("<td>{cell}</td>\n");
-        }
-        driver_rows += "</tr>\n";
-        driver_rows += "<tr class=\"ranks\">\n";
-        for cell in row.iter().map(|s| &s[3]) {
-            driver_rows += &format!("<td>{cell}</td>\n");
-        }
-        driver_rows += "</tr>\n";
-        driver_rows += "<tr class=\"deltas-percent\">\n";
-        for cell in row.iter().map(|s| &s[4]) {
-            driver_rows += &format!("<td>{cell}</td>\n");
-        }
-        driver_rows += "</tr>\n";
-    }
-
-    unindent(&format!(
-        r#"
-            <h2>{title}</h2>
-            <table>
-            <thead>
-            {header_cells}
-            </thead>
-            {driver_rows}
-            </table>
-        "#
-    ))
+    )
 }
 
 fn main() -> Result<(), Whatever> {
-    let mut body = String::new();
+    let mut body = Vec::new();
     let rallys = get_default_rallys();
     let (platform, user_ids, user_names) = get_default_users();
     for (title, rally_settings) in rallys {
@@ -108,9 +73,9 @@ fn main() -> Result<(), Whatever> {
             fastest_total,
             &fastest_stages,
         );
-        body += &rally(title, header, rows);
+        body.push(rally(title, header, rows));
     }
-    let html = index(&body);
+    let html = index(&body).into_string();
     println!("{html}");
     Ok(())
 }
