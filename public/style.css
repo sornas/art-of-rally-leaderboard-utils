@@ -23,29 +23,26 @@ th {
   font-weight: 800;
 }
 
-tr.times td:not(:first-child),
-tr.deltas td:not(:first-child) {
-  font-family: "Ubuntu Mono", serif;
-  font-weight: 400;
-  font-style: normal;
-}
-
-th,
 td {
   text-align: end;
 }
 
 th,
 td {
-  padding: 0 1ex;
+  padding: 0.3ex 1ex;
 }
 
-thead th,
-tr.deltas-percent td {
-  padding-bottom: 0.3em;
+tr:nth-child(2n) {
+  background-color: lavender;
 }
 
-tr.times td {
-  padding-top: 0.3em;
-  border-top: 1px solid black;
+table.rally td:not(:first-child),
+table.driver td.time {
+  font-family: "Ubuntu Mono", serif;
+  font-weight: 400;
+  font-style: normal;
+}
+
+table.rally td.fastest {
+  font-weight: 600;
 }
