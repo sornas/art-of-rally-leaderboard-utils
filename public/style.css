@@ -37,12 +37,16 @@ tr:nth-child(2n) {
 }
 
 table.rally td:not(:first-child),
-table.driver td.time {
+table.driver td.time,
+table.driver td.interval,
+table.stage td.time,
+table.stage td.interval {
   font-family: "Ubuntu Mono", serif;
   font-weight: 400;
   font-style: normal;
 }
 
-table.rally td.fastest {
+table.rally td.fastest,
+table.stage tr:nth-child(1) td.time {
   font-weight: 600;
 }

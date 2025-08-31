@@ -5,6 +5,7 @@ use art_of_rally_leaderboard_utils::{
     Rally, fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
     table_utils::{format_delta, format_time},
 };
+use itertools::Itertools as _;
 use maud::{PreEscaped, html};
 use snafu::Whatever;
 
@@ -38,6 +39,10 @@ fn html_page<'a>(
     )
 }
 
+fn url_safe(s: &str) -> String {
+    s.to_lowercase().replace(" ", "-")
+}
+
 fn main() -> Result<(), Whatever> {
     let rallys = get_default_rallys();
     let (platform, user_ids, user_names) = get_default_users();
@@ -59,12 +64,12 @@ fn main() -> Result<(), Whatever> {
                     th { }
                     th { "total" }
                     @for (stage, _group, weather) in &stages {
-                        th { (stage) " (" (weather) ")" }
+                        th { a href=(format!("/{}.html", url_safe(&format!("{stage} {weather}")))) { (stage) " (" (weather) ")" } }
                     }
                 }
                 @for ft in &full_times {
                     tr {
-                        td {a href=(format!("/{}.html", ft.user_name.to_lowercase().replace(" ", "-"))) { (ft.user_name) } }
+                        td { a href=(format!("/{}.html", url_safe(&ft.user_name))) { (ft.user_name) } }
                         td { }
                         @let total = ft.total_time;
                         @let fastest_total = fastest_total.unwrap();
@@ -85,7 +90,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for pt in &partial_times {
                     tr {
-                        td {a href=(format!("/{}.html", pt.user_name.to_lowercase().replace(" ", "-"))) { (pt.user_name) } }
+                        td { a href=(format!("/{}.html", url_safe(&pt.user_name))) { (pt.user_name) } }
                         td { "*" }
                         @let total = pt.total_time;
                         td { (format_time(total, true)) }
@@ -107,8 +112,8 @@ fn main() -> Result<(), Whatever> {
         ));
 
         // For each driver, in-depth stats for each stage
-        for driver in results.driver_results {
-            pages.entry(driver.name).or_default().push(html!(
+        for driver in &results.driver_results {
+            pages.entry(driver.name.clone()).or_default().push(html!(
                 h2 { (title) }
                 table class="driver" {
                     thead {
@@ -119,21 +124,82 @@ fn main() -> Result<(), Whatever> {
                         th { "rank" }
                         th { "world rank" }
                     }
-                    @for (i, ((stage, group, weather), stage_result)) in stages.iter().zip(driver.stages).enumerate() {
+                    @for (i, ((stage, group, weather), stage_result)) in stages.iter().zip(&driver.stages).enumerate() {
                         @let Some(stage_result) = stage_result else { continue; };
                         @let time = stage_result.time_ms;
                         tr {
-                            td { (stage) " (" (weather) ")" }
+                            td { a href=(format!("/{}.html", url_safe(&format!("{stage} {weather}")))) { (stage) " (" (weather) ")" } }
                             td class="time" { (format_time(time, false)) }
                             @let fast = fastest_stages[i].unwrap();
                             @if time == fast {
-                                td class="time" { "-:--:--" }
+                                td class="interval" { "-:--:---" }
                             } @else {
-                                td class="time" { (format_delta(time, fast, false)) }
+                                td class="interval" { (format_delta(time, fast, false)) }
                             }
                             td { (car_name(*group, stage_result.car)) }
                             td { (stage_result.local_rank) }
                             @if let Some(world_rank) = stage_result.world_rank {
+                                td { (world_rank) }
+                            } @else {
+                                td { }
+                            }
+                        }
+                    }
+                }
+            ));
+        }
+
+        // For each stage, in-depth stats
+        for (i, (stage, group, weather)) in stages.iter().enumerate() {
+            let stage_name = &format!("{stage} {weather}");
+            let Some(fast) = fastest_stages[i] else {
+                continue;
+            };
+            struct S {
+                name: String,
+                time: usize,
+                car: usize,
+                world_rank: Option<usize>,
+            }
+            let times = full_times
+                .iter()
+                .map(|ft| S {
+                    name: ft.user_name.to_string(),
+                    time: ft.stage_times[i],
+                    car: ft.cars[i],
+                    world_rank: ft.world_rank[i],
+                })
+                .chain(partial_times.iter().filter_map(|pt| {
+                    let time = pt.stage_times[i]?;
+                    let car = pt.cars[i]?;
+                    Some(S {
+                        name: pt.user_name.to_string(),
+                        time,
+                        car,
+                        world_rank: pt.world_rank.get(i).copied().flatten(),
+                    })
+                }))
+                .sorted_by_key(|time| time.time);
+            pages.entry(stage_name.clone()).or_default().push(html!(
+                table class="stage" {
+                    thead {
+                        th { "driver" }
+                        th { "time" }
+                        th { "interval" }
+                        th { "car" }
+                        th { "world rank" }
+                    }
+                    @for time in times {
+                        tr {
+                            td { a href=(format!("/{}.html", url_safe(&time.name))) { (time.name) } }
+                            td class="time" { (format_time(time.time, false)) }
+                            @if time.time == fast {
+                                td class="interval" { "-:--:---" }
+                            } @else {
+                                td class="interval" { (format_delta(time.time, fast, false)) }
+                            }
+                            td { (car_name(*group, time.car)) }
+                            @if let Some(world_rank) = time.world_rank {
                                 td { (world_rank) }
                             } @else {
                                 td { }
@@ -152,8 +218,8 @@ fn main() -> Result<(), Whatever> {
     .unwrap();
     for (user, parts) in &pages {
         std::fs::write(
-            format!("public/{}.html", user.to_lowercase().replace(" ", "-")),
-            html_page(user.as_str(), parts).into_string(),
+            format!("public/{}.html", url_safe(user)),
+            html_page(user, parts).into_string(),
         )
         .unwrap();
     }
