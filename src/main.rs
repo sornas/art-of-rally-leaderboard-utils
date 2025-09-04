@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, hash_map::Entry as HashMapEntry};
 
 use art_of_rally_leaderboard_api::car_name;
 use art_of_rally_leaderboard_utils::{
@@ -43,17 +43,111 @@ fn url_safe(s: &str) -> String {
     s.to_lowercase().replace(" ", "-")
 }
 
+type RallyName = String;
+type StageName = String;
+type UserName = String;
+type Time = usize;
+type LocalRank = usize;
+type BestTimes = HashMap<RallyName, HashMap<StageName, HashMap<UserName, (Time, LocalRank)>>>;
+
+fn try_read_best_times() -> Option<BestTimes> {
+    ron::from_str(&std::fs::read_to_string("best_times.ron").ok()?).ok()
+}
+
+fn write_best_times(x: &BestTimes) {
+    std::fs::write("best_times.ron", ron::to_string(x).unwrap()).unwrap();
+}
+
 fn main() -> Result<(), Whatever> {
     let rallys = get_default_rallys();
     let (platform, user_ids, user_names) = get_default_users();
     let mut parts = Vec::new();
     let mut pages: BTreeMap<String, Vec<_>> = BTreeMap::new();
 
+    let mut notifications: BTreeMap<RallyName, BTreeMap<StageName, Vec<String>>> = BTreeMap::new();
+    let mut best_times = try_read_best_times().unwrap_or_default();
+
     for Rally { title, stages } in rallys {
         let leaderboards: Vec<_> = stages.iter().map(|stage| (*stage, platform)).collect();
         let results = get_rally_results(&leaderboards, &user_ids, &user_names)?;
         let (full_times, partial_times) = split_times(&results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
+
+        // check notifications
+        for ft in &full_times {
+            for (i, (stage, _group, weather)) in stages.iter().enumerate() {
+                let (time, rank) = (ft.stage_times[i], ft.local_rank[i]);
+                let stage_name = format!("{stage} {weather}");
+                let prev_fastest = best_times
+                    .entry(title.clone())
+                    .or_default()
+                    .entry(stage_name.clone())
+                    .or_default()
+                    .entry(ft.user_name.to_string());
+                match prev_fastest {
+                    HashMapEntry::Vacant(vacant) => {
+                        vacant.insert((time, rank));
+                    }
+                    HashMapEntry::Occupied(mut occupied) => {
+                        let (prev_time, _prev_rank) = *occupied.get();
+                        if time < prev_time {
+                            notifications
+                                .entry(title.clone())
+                                .or_default()
+                                .entry(stage_name)
+                                .or_default()
+                                .push(format!(
+                                    "{} got a new pb: {} ({})",
+                                    ft.user_name,
+                                    format_time(time, false),
+                                    format_delta(time, prev_time, false)
+                                ));
+                            *(occupied.get_mut()) = (time, rank);
+                        }
+                    }
+                }
+            }
+        }
+        for pt in &partial_times {
+            for (i, (stage, _group, weather)) in stages.iter().enumerate() {
+                let Some(time) = pt.stage_times[i] else {
+                    continue;
+                };
+                let Some(rank) = pt.local_rank[i] else {
+                    continue;
+                };
+                // TODO: duplicate, should be function
+                let stage_name = format!("{stage} {weather}");
+                let prev_fastest = best_times
+                    .entry(title.clone())
+                    .or_default()
+                    .entry(stage_name.clone())
+                    .or_default()
+                    .entry(pt.user_name.to_string());
+                match prev_fastest {
+                    HashMapEntry::Vacant(vacant) => {
+                        vacant.insert((time, rank));
+                    }
+                    HashMapEntry::Occupied(mut occupied) => {
+                        let (prev_time, _prev_rank) = *occupied.get();
+                        if time < prev_time {
+                            notifications
+                                .entry(title.clone())
+                                .or_default()
+                                .entry(stage_name)
+                                .or_default()
+                                .push(format!(
+                                    "{} got a new pb: {} ({})",
+                                    pt.user_name,
+                                    format_time(time, false),
+                                    format_delta(time, prev_time, false)
+                                ));
+                            *(occupied.get_mut()) = (time, rank);
+                        }
+                    }
+                }
+            }
+        }
 
         parts.push(html!(h2 { (title) }));
         // Total results table for each rally. (stages) x (drivers).
@@ -210,6 +304,9 @@ fn main() -> Result<(), Whatever> {
             ));
         }
     }
+
+    println!("{notifications:?}");
+    write_best_times(&best_times);
 
     std::fs::write(
         "public/index.html",

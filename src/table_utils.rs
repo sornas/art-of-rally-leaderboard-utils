@@ -121,12 +121,13 @@ pub fn format_time(ms: usize, long: bool) -> String {
     }
 }
 
-pub fn format_delta(ms: usize, fast: usize, long: bool) -> String {
-    assert!(ms >= fast);
-    if ms == fast {
+pub fn format_delta(ms: usize, compared: usize, long: bool) -> String {
+    if ms < compared {
+        format!("-{}", format_time(compared - ms, long))
+    } else if ms == compared {
         "         ".to_string()
     } else {
-        format!("+{}", format_time(ms - fast, long))
+        format!("+{}", format_time(ms - compared, long))
     }
 }
 
