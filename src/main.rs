@@ -142,7 +142,7 @@ fn main() -> Result<(), Whatever> {
         let (full_times, partial_times) = split_times(&results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
 
-        let mut add_notification = |time, rank, username: String, stage, weather| {
+        let mut add_notification = |time, rank, username: String, stage, weather, stage_idx| {
             let stage_name = format!("{stage} {weather}");
             let prev_fastest = best_times
                 .entry(title.clone())
@@ -155,7 +155,20 @@ fn main() -> Result<(), Whatever> {
                     vacant.insert((time, rank));
                 }
                 HashMapEntry::Occupied(mut occupied) => {
-                    let (prev_time, _prev_rank) = *occupied.get();
+                    let (prev_time, prev_rank) = *occupied.get();
+                    let passed = if rank < prev_rank {
+                        let users = full_times
+                            .iter()
+                            .filter(|ft| {
+                                let ft_rank = ft.local_rank[stage_idx];
+                                ft_rank > rank && ft_rank <= prev_rank
+                            })
+                            .map(|ft| format!("<@{}>", id_lookup.get(ft.user_name).unwrap()))
+                            .join(", ");
+                        format!(" (passed {users})")
+                    } else {
+                        String::new()
+                    };
                     if time < prev_time {
                         notifications
                             .entry(title.clone())
@@ -163,10 +176,11 @@ fn main() -> Result<(), Whatever> {
                             .entry(stage_name)
                             .or_default()
                             .push(format!(
-                                "<@{}> got a new pb: {} ({})",
+                                "<@{}> got a new pb: {} ({}){}",
                                 id_lookup.get(username.as_str()).unwrap(),
                                 format_time(time, false),
-                                format_delta(time, prev_time, false)
+                                format_delta(time, prev_time, false),
+                                passed
                             ));
                         *(occupied.get_mut()) = (time, rank);
                     }
@@ -178,7 +192,7 @@ fn main() -> Result<(), Whatever> {
         for ft in &full_times {
             for (i, (stage, _group, weather)) in stages.iter().enumerate() {
                 let (time, rank) = (ft.stage_times[i], ft.local_rank[i]);
-                add_notification(time, rank, ft.user_name.to_string(), stage, weather);
+                add_notification(time, rank, ft.user_name.to_string(), stage, weather, i);
             }
         }
         for pt in &partial_times {
@@ -189,7 +203,7 @@ fn main() -> Result<(), Whatever> {
                 let Some(rank) = pt.local_rank[i] else {
                     continue;
                 };
-                add_notification(time, rank, pt.user_name.to_string(), stage, weather);
+                add_notification(time, rank, pt.user_name.to_string(), stage, weather, i);
             }
         }
 
