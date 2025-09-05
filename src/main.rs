@@ -125,7 +125,11 @@ fn main2() {
 fn main() -> Result<(), Whatever> {
     let rallys = get_default_rallys();
     let (platform, user_ids, user_names, discord_ids) = secret::users();
-    let id_lookup: BTreeMap<_, _> = user_names.iter().zip(discord_ids.iter()).collect();
+    let id_lookup: BTreeMap<_, _> = user_names
+        .iter()
+        .copied()
+        .zip(discord_ids.iter().copied())
+        .collect();
     let mut parts = Vec::new();
     let mut pages: BTreeMap<String, Vec<_>> = BTreeMap::new();
 
@@ -138,39 +142,43 @@ fn main() -> Result<(), Whatever> {
         let (full_times, partial_times) = split_times(&results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
 
+        let mut add_notification = |time, rank, username: String, stage, weather| {
+            let stage_name = format!("{stage} {weather}");
+            let prev_fastest = best_times
+                .entry(title.clone())
+                .or_default()
+                .entry(stage_name.clone())
+                .or_default()
+                .entry(username.clone());
+            match prev_fastest {
+                HashMapEntry::Vacant(vacant) => {
+                    vacant.insert((time, rank));
+                }
+                HashMapEntry::Occupied(mut occupied) => {
+                    let (prev_time, _prev_rank) = *occupied.get();
+                    if time < prev_time {
+                        notifications
+                            .entry(title.clone())
+                            .or_default()
+                            .entry(stage_name)
+                            .or_default()
+                            .push(format!(
+                                "<@{}> got a new pb: {} ({})",
+                                id_lookup.get(username.as_str()).unwrap(),
+                                format_time(time, false),
+                                format_delta(time, prev_time, false)
+                            ));
+                        *(occupied.get_mut()) = (time, rank);
+                    }
+                }
+            }
+        };
+
         // check notifications
         for ft in &full_times {
             for (i, (stage, _group, weather)) in stages.iter().enumerate() {
                 let (time, rank) = (ft.stage_times[i], ft.local_rank[i]);
-                let stage_name = format!("{stage} {weather}");
-                let prev_fastest = best_times
-                    .entry(title.clone())
-                    .or_default()
-                    .entry(stage_name.clone())
-                    .or_default()
-                    .entry(ft.user_name.to_string());
-                match prev_fastest {
-                    HashMapEntry::Vacant(vacant) => {
-                        vacant.insert((time, rank));
-                    }
-                    HashMapEntry::Occupied(mut occupied) => {
-                        let (prev_time, _prev_rank) = *occupied.get();
-                        if time < prev_time {
-                            notifications
-                                .entry(title.clone())
-                                .or_default()
-                                .entry(stage_name)
-                                .or_default()
-                                .push(format!(
-                                    "{} got a new pb: {} ({})",
-                                    ft.user_name,
-                                    format_time(time, false),
-                                    format_delta(time, prev_time, false)
-                                ));
-                            *(occupied.get_mut()) = (time, rank);
-                        }
-                    }
-                }
+                add_notification(time, rank, ft.user_name.to_string(), stage, weather);
             }
         }
         for pt in &partial_times {
@@ -181,36 +189,7 @@ fn main() -> Result<(), Whatever> {
                 let Some(rank) = pt.local_rank[i] else {
                     continue;
                 };
-                // TODO: duplicate, should be function
-                let stage_name = format!("{stage} {weather}");
-                let prev_fastest = best_times
-                    .entry(title.clone())
-                    .or_default()
-                    .entry(stage_name.clone())
-                    .or_default()
-                    .entry(pt.user_name.to_string());
-                match prev_fastest {
-                    HashMapEntry::Vacant(vacant) => {
-                        vacant.insert((time, rank));
-                    }
-                    HashMapEntry::Occupied(mut occupied) => {
-                        let (prev_time, _prev_rank) = *occupied.get();
-                        if time < prev_time {
-                            notifications
-                                .entry(title.clone())
-                                .or_default()
-                                .entry(stage_name)
-                                .or_default()
-                                .push(format!(
-                                    "<@{}> got a new pb: {} ({})",
-                                    id_lookup.get(&pt.user_name).unwrap(),
-                                    format_time(time, false),
-                                    format_delta(time, prev_time, false)
-                                ));
-                            *(occupied.get_mut()) = (time, rank);
-                        }
-                    }
-                }
+                add_notification(time, rank, pt.user_name.to_string(), stage, weather);
             }
         }
 
