@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, HashMap, hash_map::Entry as HashMapEntry};
 
 use art_of_rally_leaderboard_api::car_name;
 use art_of_rally_leaderboard_utils::{
-    Rally, fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
+    Rally, fastest_times, get_default_rallys, get_rally_results, secret, split_times,
     table_utils::{format_delta, format_time},
 };
 use itertools::Itertools as _;
 use maud::{PreEscaped, html};
+use serde::Serialize;
 use snafu::Whatever;
 
 fn html_page<'a>(
@@ -58,13 +59,77 @@ fn write_best_times(x: &BestTimes) {
     std::fs::write("best_times.ron", ron::to_string(x).unwrap()).unwrap();
 }
 
+type Notifications = BTreeMap<RallyName, BTreeMap<StageName, Vec<String>>>;
+
+fn send_notifications(notifications: &Notifications) {
+    let mut message = "new leaderboard records!\n\n".to_string();
+    for (rally, stages) in notifications {
+        message += &format!("\\#\\# {rally}\n\n");
+        for (stage, results) in stages {
+            if results.len() == 1 {
+                message += &format!("{stage}: {}\n", results[0]);
+            } else {
+                message += &format!("{stage}:\n");
+                for result in results {
+                    message += &format!("- {result}\n");
+                }
+            }
+            message += "\n";
+        }
+    }
+    message += "\n";
+
+    #[derive(Serialize)]
+    struct WebhookMessage {
+        content: String,
+        allowed_mentions: HashMap<String, Vec<String>>,
+    }
+
+    println!("sending notification...");
+    println!(
+        "{:?}",
+        ureq::post(secret::WEBHOOK_URL)
+            .send_json(&WebhookMessage {
+                content: message,
+                allowed_mentions: [("parse".to_string(), vec![])].into_iter().collect()
+            })
+            .unwrap()
+            .status()
+    );
+}
+
+#[allow(unused)]
+fn main2() {
+    let default_message = "<@165534811736375296> got a new pb: 1:47.812 (-0:01.058)".to_string();
+    let mut notifications: BTreeMap<RallyName, BTreeMap<StageName, Vec<String>>> = BTreeMap::new();
+    let norway_rally = notifications
+        .entry("norway - group 4".to_string())
+        .or_default();
+    let rostavatn = norway_rally
+        .entry("lake rostavatn dry".to_string())
+        .or_default();
+    rostavatn.push(default_message.clone());
+    rostavatn.push(default_message.clone());
+    let kenya_rally = notifications
+        .entry("kenya - group b".to_string())
+        .or_default();
+    let stage1 = kenya_rally.entry("stage 1 dry".to_string()).or_default();
+    stage1.push(default_message.clone());
+    let stage2 = kenya_rally.entry("stage 2 night".to_string()).or_default();
+    stage2.push(default_message.clone());
+    stage2.push(default_message.clone());
+
+    send_notifications(&notifications);
+}
+
 fn main() -> Result<(), Whatever> {
     let rallys = get_default_rallys();
-    let (platform, user_ids, user_names) = get_default_users();
+    let (platform, user_ids, user_names, discord_ids) = secret::users();
+    let id_lookup: BTreeMap<_, _> = user_names.iter().zip(discord_ids.iter()).collect();
     let mut parts = Vec::new();
     let mut pages: BTreeMap<String, Vec<_>> = BTreeMap::new();
 
-    let mut notifications: BTreeMap<RallyName, BTreeMap<StageName, Vec<String>>> = BTreeMap::new();
+    let mut notifications: Notifications = BTreeMap::new();
     let mut best_times = try_read_best_times().unwrap_or_default();
 
     for Rally { title, stages } in rallys {
@@ -137,8 +202,8 @@ fn main() -> Result<(), Whatever> {
                                 .entry(stage_name)
                                 .or_default()
                                 .push(format!(
-                                    "{} got a new pb: {} ({})",
-                                    pt.user_name,
+                                    "<@{}> got a new pb: {} ({})",
+                                    id_lookup.get(&pt.user_name).unwrap(),
                                     format_time(time, false),
                                     format_delta(time, prev_time, false)
                                 ));
@@ -163,7 +228,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for ft in &full_times {
                     tr {
-                        td { a href=(format!("/{}.html", url_safe(&ft.user_name))) { (ft.user_name) } }
+                        td { a href=(format!("/{}.html", url_safe(ft.user_name))) { (ft.user_name) } }
                         td { }
                         @let total = ft.total_time;
                         @let fastest_total = fastest_total.unwrap();
@@ -184,7 +249,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for pt in &partial_times {
                     tr {
-                        td { a href=(format!("/{}.html", url_safe(&pt.user_name))) { (pt.user_name) } }
+                        td { a href=(format!("/{}.html", url_safe(pt.user_name))) { (pt.user_name) } }
                         td { "*" }
                         @let total = pt.total_time;
                         td { (format_time(total, true)) }
@@ -305,7 +370,10 @@ fn main() -> Result<(), Whatever> {
         }
     }
 
-    println!("{notifications:?}");
+    if !notifications.is_empty() {
+        send_notifications(&notifications);
+    }
+
     write_best_times(&best_times);
 
     std::fs::write(

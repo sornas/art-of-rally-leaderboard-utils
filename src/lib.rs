@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use snafu::Whatever;
 
 pub mod http;
+pub mod secret;
 pub mod table_utils;
 
 pub type StageWithLeaderboard = (Stage, Group, Weather);
@@ -70,26 +71,6 @@ pub fn get_default_rallys() -> Vec<Rally> {
                 .to_vec(),
         },
     ]
-}
-
-pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
-    (
-        Platform::Steam,
-        vec![
-            76561198230518420,
-            76561198087789780,
-            76561198062269100,
-            76561198207854185,
-            76561198049071819,
-            76561197996901884,
-            76561198305558712,
-            76561198052484118,
-            76561198857520448,
-        ],
-        vec![
-            "Johan B", "Martin", "Gustav", "Beatrice", "Emil", "Frans", "Anton", "Leo", "Jonatan",
-        ],
-    )
 }
 
 pub fn get_rally_results(
