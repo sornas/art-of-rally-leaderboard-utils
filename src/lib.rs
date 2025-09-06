@@ -8,26 +8,31 @@ use serde::{Deserialize, Serialize};
 use snafu::Whatever;
 
 pub mod http;
+pub mod secret;
 pub mod table_utils;
 
 pub type StageWithLeaderboard = (Stage, Group, Weather);
 
+#[derive(Deserialize, Serialize)]
 pub struct Rally {
     pub title: String,
     pub stages: Vec<StageWithLeaderboard>,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct DriverResult {
     pub name: String,
     pub stages: Vec<Option<StageResult>>,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct RallyResults {
     pub stages: Vec<StageWithLeaderboard>,
     pub driver_results: Vec<DriverResult>,
+    pub stage_results: Vec<Vec<(String, StageResult)>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct StageResult {
     pub car: usize,
     pub time_ms: usize,
@@ -72,31 +77,16 @@ pub fn get_default_rallys() -> Vec<Rally> {
     ]
 }
 
-pub fn get_default_users() -> (Platform, Vec<u64>, Vec<&'static str>) {
-    (
-        Platform::Steam,
-        vec![
-            76561198230518420,
-            76561198087789780,
-            76561198062269100,
-            76561198207854185,
-            76561198049071819,
-            76561197996901884,
-            76561198305558712,
-            76561198052484118,
-            76561198857520448,
-        ],
-        vec![
-            "Johan B", "Martin", "Gustav", "Beatrice", "Emil", "Frans", "Anton", "Leo", "Jonatan",
-        ],
-    )
-}
-
 pub fn get_rally_results(
     leaderboards: &[(StageWithLeaderboard, Platform)],
     user_ids: &[u64],
     user_names: &[&str],
 ) -> Result<RallyResults, Whatever> {
+    let stages = leaderboards
+        .iter()
+        .copied()
+        .map(|(stage, _)| stage)
+        .collect_vec();
     let result_urls: Vec<_> = leaderboards
         .iter()
         .copied()
@@ -111,7 +101,7 @@ pub fn get_rally_results(
             .as_url(user_ids[0], &user_ids[1..])
         })
         .collect();
-    let leaderboard_results = http::download_all::<Response>(&result_urls)?;
+    let leaderboard_results = http::download_all::<Response>(&result_urls);
 
     // TODO: only ask for rank of users who have a time
     let rank_urls: Vec<_> = user_ids
@@ -136,13 +126,14 @@ pub fn get_rally_results(
     }
 
     // World rank, in the same order we asked for (so users x leaderboard: [(user1, board1), (user1, board2), ..., (user2, board1), ...])
-    let ranks = http::download_all::<Rank>(&rank_urls)?;
+    let ranks = http::download_all::<Rank>(&rank_urls);
+    assert_eq!(ranks.len(), user_ids.len() * leaderboards.len());
     // If we chunk by number of leaderboards we get chunks per user.
     let world_rank_by_user: Vec<_> = ranks.chunks_exact(leaderboards.len()).collect();
 
     let mut driver_results: BTreeMap<String, Vec<Option<StageResult>>> = BTreeMap::new();
     for (stage_idx, leaderboard) in leaderboard_results.into_iter().enumerate() {
-        let mut entries = leaderboard.unwrap().unwrap().leaderboard;
+        let mut entries = leaderboard.unwrap().leaderboard;
 
         // We don't know which user id is which user! But we know the relative
         // ranking of usernames (LeaderboardEntry), and the world rank for each
@@ -154,9 +145,9 @@ pub fn get_rally_results(
 
         let mut sorted_world_ranks = world_rank_by_user
             .iter()
-            .flat_map(|user_ranks| user_ranks.get(stage_idx).unwrap())
+            .map(|user_ranks| user_ranks.get(stage_idx).unwrap())
             .zip(user_names)
-            .filter_map(|(rank, name)| rank.as_ref().ok().map(|rank| (rank.rank, name)))
+            .filter_map(|(r, name)| r.as_ref().map(|r| (r.rank, name)))
             .sorted_by_key(|(rank, _name)| *rank);
 
         for entry in entries {
@@ -173,19 +164,30 @@ pub fn get_rally_results(
         }
     }
 
+    let mut stage_results = stages.iter().map(|_| Vec::new()).collect_vec();
+    for (driver, driver_stage_results) in &driver_results {
+        for (i, driver_stage_result) in driver_stage_results.iter().enumerate() {
+            let Some(driver_stage_result) = driver_stage_result else {
+                continue;
+            };
+            stage_results[i].push((driver.clone(), driver_stage_result.clone()));
+        }
+    }
+    for stage_result in &mut stage_results {
+        stage_result.sort_by_key(|(_, x)| x.time_ms);
+    }
+
     Ok(RallyResults {
-        stages: leaderboards
-            .iter()
-            .copied()
-            .map(|(stage, _)| stage)
-            .collect(),
+        stages,
         driver_results: driver_results
             .into_iter()
             .map(|(name, stages)| DriverResult { name, stages })
             .collect(),
+        stage_results,
     })
 }
 
+#[derive(Debug)]
 pub struct FullTime<'s> {
     pub total_time: usize,
     pub user_name: &'s str,
@@ -195,6 +197,7 @@ pub struct FullTime<'s> {
     pub cars: Vec<usize>,
 }
 
+#[derive(Debug)]
 pub struct PartialTime<'s> {
     pub finished_stages: usize,
     pub total_time: usize,

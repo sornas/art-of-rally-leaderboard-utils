@@ -1,12 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use art_of_rally_leaderboard_api::car_name;
+use art_of_rally_leaderboard_api::{Platform, car_name};
 use art_of_rally_leaderboard_utils::{
-    Rally, fastest_times, get_default_rallys, get_default_users, get_rally_results, split_times,
+    Rally, RallyResults, fastest_times, get_default_rallys, get_rally_results, secret, split_times,
     table_utils::{format_delta, format_time},
 };
+use indexmap::IndexMap;
 use itertools::Itertools as _;
 use maud::{PreEscaped, html};
+use serde::{Deserialize, Serialize};
 use snafu::Whatever;
 
 fn html_page<'a>(
@@ -43,19 +45,305 @@ fn url_safe(s: &str) -> String {
     s.to_lowercase().replace(" ", "-")
 }
 
-fn main() -> Result<(), Whatever> {
-    let rallys = get_default_rallys();
-    let (platform, user_ids, user_names) = get_default_users();
+type RallyName = String;
+type StageName = String;
+
+#[derive(Debug)]
+enum Row {
+    // Rendered as `> {rank} {name} {time}`
+    FirstTime {
+        rank: usize,
+        name: String,
+        time: usize,
+    },
+    // Rendered as `^ {rank} {name} {time} {delta}`
+    TimeImprovedRankIncreased {
+        rank: usize,
+        name: String,
+        time: usize,
+        prev: usize,
+    },
+    // Rendered as `~ {rank} {name} {time} {delta}`
+    TimeImproved {
+        rank: usize,
+        name: String,
+        time: usize,
+        prev: usize,
+    },
+    // Rendered as `v {rank} {name} {time} {delta}`
+    TimeImprovedRankDecreased {
+        rank: usize,
+        name: String,
+        time: usize,
+        prev: usize,
+    },
+    // Rendered as `v {rank} {name} {time}`
+    RankDecreased {
+        rank: usize,
+        name: String,
+        time: usize,
+    },
+}
+
+impl Row {
+    fn rank(&self) -> usize {
+        match self {
+            Row::FirstTime { rank, .. } => *rank,
+            Row::TimeImprovedRankIncreased { rank, .. } => *rank,
+            Row::TimeImproved { rank, .. } => *rank,
+            Row::TimeImprovedRankDecreased { rank, .. } => *rank,
+            Row::RankDecreased { rank, .. } => *rank,
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Row::FirstTime { name, .. } => name,
+            Row::TimeImprovedRankIncreased { name, .. } => name,
+            Row::TimeImproved { name, .. } => name,
+            Row::TimeImprovedRankDecreased { name, .. } => name,
+            Row::RankDecreased { name, .. } => name,
+        }
+    }
+}
+
+type NotificationTable = IndexMap<RallyName, IndexMap<StageName, Vec<Row>>>;
+
+fn send_notification(notifications: &NotificationTable) {
+    let mut message = "```".to_string();
+    for (rally, stages) in notifications {
+        message += &format!("\n{rally}\n");
+        for (stage, rows) in stages {
+            message += &format!("  {stage}\n");
+            for row in rows {
+                let name_width = rows.iter().map(|row| row.name().len()).max().unwrap();
+                message += "    ";
+                message += &match row {
+                    Row::FirstTime { rank, name, time } => {
+                        format!(
+                            "> {}.  {:name_width$}  {}",
+                            rank,
+                            name,
+                            format_time(*time, false),
+                            name_width = name_width,
+                        )
+                    }
+                    Row::TimeImprovedRankIncreased {
+                        rank,
+                        name,
+                        time,
+                        prev,
+                    } => format!(
+                        "^ {}.  {:name_width$}  {}  {}",
+                        rank,
+                        name,
+                        format_time(*time, false),
+                        format_delta(*time, *prev, false),
+                        name_width = name_width,
+                    ),
+                    Row::TimeImproved {
+                        rank,
+                        name,
+                        time,
+                        prev,
+                    } => format!(
+                        "~ {}.  {:name_width$}  {}  {}",
+                        rank,
+                        name,
+                        format_time(*time, false),
+                        format_delta(*time, *prev, false),
+                        name_width = name_width,
+                    ),
+                    Row::TimeImprovedRankDecreased {
+                        rank,
+                        name,
+                        time,
+                        prev,
+                    } => format!(
+                        "v {}.  {:name_width$}  {}  {}",
+                        rank,
+                        name,
+                        format_time(*time, false),
+                        format_delta(*time, *prev, false),
+                        name_width = name_width,
+                    ),
+                    Row::RankDecreased { rank, name, time } => {
+                        format!(
+                            "v {}.  {:name_width$}  {}",
+                            rank,
+                            name,
+                            format_time(*time, false),
+                            name_width = name_width
+                        )
+                    }
+                };
+                message += "\n";
+            }
+        }
+    }
+    message += "```";
+
+    #[derive(Serialize)]
+    struct WebhookMessage {
+        content: String,
+        allowed_mentions: HashMap<String, Vec<String>>,
+    }
+
+    println!("{message}");
+    println!("sending notification...");
+    match ureq::post(secret::WEBHOOK_URL).send_json(&WebhookMessage {
+        content: message,
+        allowed_mentions: [("parse".to_string(), vec![])].into_iter().collect(),
+    }) {
+        Ok(mut r) => println!("{:?}: {:?}", r.status(), r.body_mut().read_to_string()),
+        Err(e) => println!("{e:?}"),
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct Db {
+    rallys: Vec<Rally>,
+    results: Vec<RallyResults>,
+    platform: Platform,
+    user_ids: Vec<u64>,
+    user_names: Vec<String>,
+    discord_ids: Vec<String>,
+}
+
+fn download(
+    rallys: Vec<Rally>,
+    platform: Platform,
+    user_ids: Vec<u64>,
+    user_names: Vec<&'static str>,
+    discord_ids: Vec<&'static str>,
+) -> Result<Db, Whatever> {
+    let mut results = Vec::new();
+    for rally in &rallys {
+        let leaderboards = rally
+            .stages
+            .iter()
+            .copied()
+            .map(|stage| (stage, platform))
+            .collect_vec();
+        results.push(get_rally_results(&leaderboards, &user_ids, &user_names)?);
+    }
+
+    Ok(Db {
+        rallys,
+        results,
+        platform,
+        user_ids,
+        user_names: user_names.into_iter().map(str::to_string).collect(),
+        discord_ids: discord_ids.into_iter().map(str::to_string).collect(),
+    })
+}
+
+fn report(db: Db, prev: Option<Db>) {
     let mut parts = Vec::new();
-    let mut pages: BTreeMap<String, Vec<_>> = BTreeMap::new();
+    let mut pages: BTreeMap<String, Vec<_>> = Default::default();
+    let mut table: NotificationTable = Default::default();
 
-    for Rally { title, stages } in rallys {
-        let leaderboards: Vec<_> = stages.iter().map(|stage| (*stage, platform)).collect();
-        let results = get_rally_results(&leaderboards, &user_ids, &user_names)?;
-        let (full_times, partial_times) = split_times(&results);
-        let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
+    for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
+        // Find corresponding previous rally by name
+        let prev_results = prev.as_ref().and_then(|prev| {
+            prev.rallys
+                .iter()
+                .zip(prev.results.iter())
+                .find_map(|(prev_rally, prev_results)| {
+                    prev_rally.title.eq(&rally.title).then_some(prev_results)
+                })
+        });
 
-        parts.push(html!(h2 { (title) }));
+        // For each user, if they drove a new record, add it to the notification table
+        for driver in &results.driver_results {
+            for (stage_idx, ((stage, _group, weather), stage_results)) in
+                rally.stages.iter().zip(driver.stages.iter()).enumerate()
+            {
+                let stage_name = format!("{stage} {weather}");
+                let Some(stage_results) = stage_results else {
+                    continue;
+                };
+                let (time, rank) = (stage_results.time_ms, stage_results.local_rank);
+
+                // Try to find the previous time
+                let prev_stage_result = prev_results
+                    .and_then(|r| {
+                        r.driver_results
+                            .iter()
+                            .find_map(|d| d.name.eq(&driver.name).then_some(&d.stages))
+                    })
+                    .and_then(|stages| stages[stage_idx].as_ref());
+                let prev_time = prev_stage_result.as_ref().map(|r| r.time_ms);
+                let prev_rank = prev_stage_result.as_ref().map(|r| r.local_rank);
+                let time_increased = prev_time.is_some_and(|prev_time| time < prev_time);
+                let rank_increased = prev_rank.is_some_and(|prev_rank| rank < prev_rank);
+                let rank_same = prev_rank.is_some_and(|prev_rank| rank == prev_rank);
+                let rank_decreased = prev_rank.is_some_and(|prev_rank| rank > prev_rank);
+
+                dbg!((
+                    &driver.name,
+                    &stage_name,
+                    (time, rank),
+                    (prev_time, prev_rank)
+                ));
+
+                let mut add_row = |x| {
+                    table
+                        .entry(rally.title.clone())
+                        .or_default()
+                        .entry(stage_name.clone())
+                        .or_default()
+                        .push(x);
+                };
+                if prev_stage_result.is_none() {
+                    add_row(Row::FirstTime {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                    });
+                } else if time_increased && rank_increased {
+                    add_row(Row::TimeImprovedRankIncreased {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                        prev: prev_time.unwrap(),
+                    });
+                } else if time_increased && rank_same {
+                    add_row(Row::TimeImproved {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                        prev: prev_time.unwrap(),
+                    });
+                } else if time_increased && rank_decreased {
+                    add_row(Row::TimeImprovedRankDecreased {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                        prev: prev_time.unwrap(),
+                    });
+                } else if rank_decreased {
+                    add_row(Row::RankDecreased {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                    });
+                }
+            }
+        }
+    }
+
+    for stages in table.values_mut() {
+        for rows in stages.values_mut() {
+            rows.sort_by_key(Row::rank);
+        }
+    }
+
+    for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
+        let (full_times, partial_times) = split_times(results);
+        let (fastest_total, fastest_stages) = fastest_times(&full_times, results);
+
+        parts.push(html!(h2 { (rally.title) }));
         // Total results table for each rally. (stages) x (drivers).
         parts.push(html!(
             table class="rally" {
@@ -63,13 +351,13 @@ fn main() -> Result<(), Whatever> {
                     th { "driver" }
                     th { }
                     th { "total" }
-                    @for (stage, _group, weather) in &stages {
+                    @for (stage, _group, weather) in &rally.stages {
                         th { a href=(format!("/{}.html", url_safe(&format!("{stage} {weather}")))) { (stage) " (" (weather) ")" } }
                     }
                 }
                 @for ft in &full_times {
                     tr {
-                        td { a href=(format!("/{}.html", url_safe(&ft.user_name))) { (ft.user_name) } }
+                        td { a href=(format!("/{}.html", url_safe(ft.user_name))) { (ft.user_name) } }
                         td { }
                         @let total = ft.total_time;
                         @let fastest_total = fastest_total.unwrap();
@@ -90,7 +378,7 @@ fn main() -> Result<(), Whatever> {
                 }
                 @for pt in &partial_times {
                     tr {
-                        td { a href=(format!("/{}.html", url_safe(&pt.user_name))) { (pt.user_name) } }
+                        td { a href=(format!("/{}.html", url_safe(pt.user_name))) { (pt.user_name) } }
                         td { "*" }
                         @let total = pt.total_time;
                         td { (format_time(total, true)) }
@@ -114,7 +402,7 @@ fn main() -> Result<(), Whatever> {
         // For each driver, in-depth stats for each stage
         for driver in &results.driver_results {
             pages.entry(driver.name.clone()).or_default().push(html!(
-                h2 { (title) }
+                h2 { (rally.title) }
                 table class="driver" {
                     thead {
                         th { "stage" }
@@ -124,7 +412,7 @@ fn main() -> Result<(), Whatever> {
                         th { "rank" }
                         th { "world rank" }
                     }
-                    @for (i, ((stage, group, weather), stage_result)) in stages.iter().zip(&driver.stages).enumerate() {
+                    @for (i, ((stage, group, weather), stage_result)) in rally.stages.iter().zip(&driver.stages).enumerate() {
                         @let Some(stage_result) = stage_result else { continue; };
                         @let time = stage_result.time_ms;
                         tr {
@@ -150,7 +438,7 @@ fn main() -> Result<(), Whatever> {
         }
 
         // For each stage, in-depth stats
-        for (i, (stage, group, weather)) in stages.iter().enumerate() {
+        for (i, (stage, group, weather)) in rally.stages.iter().enumerate() {
             let stage_name = &format!("{stage} {weather}");
             let Some(fast) = fastest_stages[i] else {
                 continue;
@@ -211,6 +499,12 @@ fn main() -> Result<(), Whatever> {
         }
     }
 
+    dbg!(&table);
+
+    if prev.is_some() && !table.is_empty() {
+        send_notification(&table);
+    }
+
     std::fs::write(
         "public/index.html",
         html_page("basvektorernas art of rally-leaderboard", &parts).into_string(),
@@ -223,5 +517,28 @@ fn main() -> Result<(), Whatever> {
         )
         .unwrap();
     }
+}
+
+fn main() -> Result<(), Whatever> {
+    std::fs::create_dir_all("data").unwrap();
+
+    let rallys = get_default_rallys();
+    let (platform, user_ids, user_names, discord_ids) = secret::users();
+
+    let db = download(rallys, platform, user_ids, user_names, discord_ids)?;
+    let ts = chrono::Utc::now().timestamp();
+
+    let prev = std::fs::read_dir("data")
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .sorted()
+        .last()
+        .map(|path| ron::from_str(&std::fs::read_to_string(path).unwrap()).unwrap());
+
+    std::fs::write(format!("data/{ts}.ron"), ron::to_string(&db).unwrap()).unwrap();
+
+    report(db, prev);
+
     Ok(())
 }
