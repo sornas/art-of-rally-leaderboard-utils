@@ -13,23 +13,26 @@ pub mod table_utils;
 
 pub type StageWithLeaderboard = (Stage, Group, Weather);
 
+#[derive(Deserialize, Serialize)]
 pub struct Rally {
     pub title: String,
     pub stages: Vec<StageWithLeaderboard>,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct DriverResult {
     pub name: String,
     pub stages: Vec<Option<StageResult>>,
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct RallyResults {
     pub stages: Vec<StageWithLeaderboard>,
     pub driver_results: Vec<DriverResult>,
     pub stage_results: Vec<Vec<(String, StageResult)>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct StageResult {
     pub car: usize,
     pub time_ms: usize,
@@ -98,7 +101,7 @@ pub fn get_rally_results(
             .as_url(user_ids[0], &user_ids[1..])
         })
         .collect();
-    let leaderboard_results = http::download_all::<Response>(&result_urls)?;
+    let leaderboard_results = http::download_all::<Response>(&result_urls);
 
     // TODO: only ask for rank of users who have a time
     let rank_urls: Vec<_> = user_ids
@@ -123,13 +126,13 @@ pub fn get_rally_results(
     }
 
     // World rank, in the same order we asked for (so users x leaderboard: [(user1, board1), (user1, board2), ..., (user2, board1), ...])
-    let ranks = http::download_all::<Rank>(&rank_urls)?;
+    let ranks = http::download_all::<Rank>(&rank_urls);
     // If we chunk by number of leaderboards we get chunks per user.
     let world_rank_by_user: Vec<_> = ranks.chunks_exact(leaderboards.len()).collect();
 
     let mut driver_results: BTreeMap<String, Vec<Option<StageResult>>> = BTreeMap::new();
     for (stage_idx, leaderboard) in leaderboard_results.into_iter().enumerate() {
-        let mut entries = leaderboard.unwrap().unwrap().leaderboard;
+        let mut entries = leaderboard.unwrap().leaderboard;
 
         // We don't know which user id is which user! But we know the relative
         // ranking of usernames (LeaderboardEntry), and the world rank for each
@@ -143,7 +146,7 @@ pub fn get_rally_results(
             .iter()
             .flat_map(|user_ranks| user_ranks.get(stage_idx).unwrap())
             .zip(user_names)
-            .filter_map(|(rank, name)| rank.as_ref().ok().map(|rank| (rank.rank, name)))
+            .map(|(rank, name)| (rank.rank, name))
             .sorted_by_key(|(rank, _name)| *rank);
 
         for entry in entries {

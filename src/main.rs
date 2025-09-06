@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, HashMap, hash_map::Entry as HashMapEntry};
 
-use art_of_rally_leaderboard_api::car_name;
+use art_of_rally_leaderboard_api::{Platform, car_name};
 use art_of_rally_leaderboard_utils::{
-    Rally, fastest_times, get_default_rallys, get_rally_results, secret, split_times,
+    Rally, RallyResults, fastest_times, get_default_rallys, get_rally_results, secret, split_times,
     table_utils::{format_delta, format_time},
 };
 use itertools::Itertools as _;
 use maud::{PreEscaped, html};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use snafu::Whatever;
 
 fn html_page<'a>(
@@ -85,6 +85,7 @@ fn send_notifications(notifications: &Notifications) {
         allowed_mentions: HashMap<String, Vec<String>>,
     }
 
+    println!("{message}");
     println!("sending notification...");
     match ureq::post(secret::WEBHOOK_URL).send_json(&WebhookMessage {
         content: message,
@@ -95,43 +96,67 @@ fn send_notifications(notifications: &Notifications) {
     }
 }
 
-fn main() -> Result<(), Whatever> {
-    let rallys = get_default_rallys();
-    let (platform, user_ids, user_names, discord_ids) = secret::users();
-    let id_lookup: BTreeMap<_, _> = user_names
-        .iter()
-        .copied()
-        .zip(discord_ids.iter().copied())
-        .collect();
+#[derive(Deserialize, Serialize)]
+struct Db {
+    rallys: Vec<Rally>,
+    results: Vec<RallyResults>,
+    platform: Platform,
+    user_ids: Vec<u64>,
+    user_names: Vec<String>,
+    discord_ids: Vec<String>,
+}
+
+fn download(
+    rallys: Vec<Rally>,
+    platform: Platform,
+    user_ids: Vec<u64>,
+    user_names: Vec<&'static str>,
+    discord_ids: Vec<&'static str>,
+) -> Result<Db, Whatever> {
+    let mut results = Vec::new();
+    for rally in &rallys {
+        let leaderboards = rally
+            .stages
+            .iter()
+            .copied()
+            .map(|stage| (stage, platform))
+            .collect_vec();
+        results.push(get_rally_results(&leaderboards, &user_ids, &user_names)?);
+    }
+
+    Ok(Db {
+        rallys,
+        results,
+        platform,
+        user_ids,
+        user_names: user_names.into_iter().map(str::to_string).collect(),
+        discord_ids: discord_ids.into_iter().map(str::to_string).collect(),
+    })
+}
+
+fn report(db: Db) {
     let mut parts = Vec::new();
     let mut pages: BTreeMap<String, Vec<_>> = BTreeMap::new();
-
     let mut notifications: Notifications = BTreeMap::new();
     let mut best_times = try_read_best_times().unwrap_or_default();
 
-    for Rally {
-        title: rally_title,
-        stages,
-    } in rallys
-    {
-        let leaderboards: Vec<_> = stages.iter().map(|stage| (*stage, platform)).collect();
-        let results = get_rally_results(&leaderboards, &user_ids, &user_names)?;
-        let (full_times, partial_times) = split_times(&results);
-        let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
+    for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
+        let (full_times, partial_times) = split_times(results);
+        let (fastest_total, fastest_stages) = fastest_times(&full_times, results);
 
         let mut check_new_fastest_time =
             |time, rank, username: String, stage, weather, stage_idx| {
                 let stage_name = format!("{stage} {weather}");
                 // Previously stored fastest time
                 let prev_fastest = best_times
-                    .entry(rally_title.clone())
+                    .entry(rally.title.clone())
                     .or_default()
                     .entry(stage_name.clone())
                     .or_default()
                     .entry(username.clone());
                 let add_notification = |msg| {
                     notifications
-                        .entry(rally_title.clone())
+                        .entry(rally.title.clone())
                         .or_default()
                         .entry(stage_name)
                         .or_default()
@@ -160,9 +185,7 @@ fn main() -> Result<(), Whatever> {
                                 .filter(|(_, user_rank)| {
                                     *user_rank > rank && *user_rank <= prev_rank
                                 })
-                                .map(|(user_name, _)| {
-                                    format!("<@{}>", id_lookup.get(user_name).unwrap())
-                                })
+                                .map(|(user_name, _)| user_name)
                                 .join(", ");
                             format!(" (passed {users})")
                         } else {
@@ -184,13 +207,13 @@ fn main() -> Result<(), Whatever> {
 
         // check notifications
         for ft in &full_times {
-            for (i, (stage, _group, weather)) in stages.iter().enumerate() {
+            for (i, (stage, _group, weather)) in rally.stages.iter().enumerate() {
                 let (time, rank) = (ft.stage_times[i], ft.local_rank[i]);
                 check_new_fastest_time(time, rank, ft.user_name.to_string(), stage, weather, i);
             }
         }
         for pt in &partial_times {
-            for (i, (stage, _group, weather)) in stages.iter().enumerate() {
+            for (i, (stage, _group, weather)) in rally.stages.iter().enumerate() {
                 let Some(time) = pt.stage_times[i] else {
                     continue;
                 };
@@ -201,7 +224,7 @@ fn main() -> Result<(), Whatever> {
             }
         }
 
-        parts.push(html!(h2 { (rally_title) }));
+        parts.push(html!(h2 { (rally.title) }));
         // Total results table for each rally. (stages) x (drivers).
         parts.push(html!(
             table class="rally" {
@@ -209,7 +232,7 @@ fn main() -> Result<(), Whatever> {
                     th { "driver" }
                     th { }
                     th { "total" }
-                    @for (stage, _group, weather) in &stages {
+                    @for (stage, _group, weather) in &rally.stages {
                         th { a href=(format!("/{}.html", url_safe(&format!("{stage} {weather}")))) { (stage) " (" (weather) ")" } }
                     }
                 }
@@ -260,7 +283,7 @@ fn main() -> Result<(), Whatever> {
         // For each driver, in-depth stats for each stage
         for driver in &results.driver_results {
             pages.entry(driver.name.clone()).or_default().push(html!(
-                h2 { (rally_title) }
+                h2 { (rally.title) }
                 table class="driver" {
                     thead {
                         th { "stage" }
@@ -270,7 +293,7 @@ fn main() -> Result<(), Whatever> {
                         th { "rank" }
                         th { "world rank" }
                     }
-                    @for (i, ((stage, group, weather), stage_result)) in stages.iter().zip(&driver.stages).enumerate() {
+                    @for (i, ((stage, group, weather), stage_result)) in rally.stages.iter().zip(&driver.stages).enumerate() {
                         @let Some(stage_result) = stage_result else { continue; };
                         @let time = stage_result.time_ms;
                         tr {
@@ -296,7 +319,7 @@ fn main() -> Result<(), Whatever> {
         }
 
         // For each stage, in-depth stats
-        for (i, (stage, group, weather)) in stages.iter().enumerate() {
+        for (i, (stage, group, weather)) in rally.stages.iter().enumerate() {
             let stage_name = &format!("{stage} {weather}");
             let Some(fast) = fastest_stages[i] else {
                 continue;
@@ -375,5 +398,18 @@ fn main() -> Result<(), Whatever> {
         )
         .unwrap();
     }
+}
+
+fn main() -> Result<(), Whatever> {
+    let rallys = get_default_rallys();
+    let (platform, user_ids, user_names, discord_ids) = secret::users();
+
+    let db = download(rallys, platform, user_ids, user_names, discord_ids)?;
+    let ts = chrono::Utc::now().timestamp();
+
+    std::fs::create_dir_all("data").unwrap();
+    std::fs::write(format!("data/{ts}.ron"), ron::to_string(&db).unwrap()).unwrap();
+    report(db);
+
     Ok(())
 }
