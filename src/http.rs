@@ -53,10 +53,7 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Serialize + Clone>(
                 (url, CacheResult::Miss)
             };
             match cache_hit {
-                CacheResult::CacheHit(x) => {
-                    progress.inc(1);
-                    Some(x)
-                }
+                CacheResult::CacheHit(x) => Some(x),
                 CacheResult::Miss => {
                     let resp = agent
                         .get(url.as_ref())
@@ -68,10 +65,12 @@ pub fn download_all<T: for<'a> Deserialize<'a> + Serialize + Clone>(
                     if cache {
                         insert_cache(url.as_ref(), &resp);
                     }
-                    progress.inc(1);
                     Some(resp)
                 }
             }
+        })
+        .inspect(|_| {
+            progress.inc(1);
         })
         .collect_vec()
 }
