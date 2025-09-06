@@ -127,6 +127,7 @@ pub fn get_rally_results(
 
     // World rank, in the same order we asked for (so users x leaderboard: [(user1, board1), (user1, board2), ..., (user2, board1), ...])
     let ranks = http::download_all::<Rank>(&rank_urls);
+    assert_eq!(ranks.len(), user_ids.len() * leaderboards.len());
     // If we chunk by number of leaderboards we get chunks per user.
     let world_rank_by_user: Vec<_> = ranks.chunks_exact(leaderboards.len()).collect();
 
@@ -144,9 +145,9 @@ pub fn get_rally_results(
 
         let mut sorted_world_ranks = world_rank_by_user
             .iter()
-            .flat_map(|user_ranks| user_ranks.get(stage_idx).unwrap())
+            .map(|user_ranks| user_ranks.get(stage_idx).unwrap())
             .zip(user_names)
-            .map(|(rank, name)| (rank.rank, name))
+            .filter_map(|(r, name)| r.as_ref().map(|r| (r.rank, name)))
             .sorted_by_key(|(rank, _name)| *rank);
 
         for entry in entries {
