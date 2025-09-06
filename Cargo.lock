@@ -38,6 +38,7 @@ version = "0.1.0"
 dependencies = [
  "art-of-rally-leaderboard-api",
  "chrono",
+ "indexmap",
  "indicatif",
  "itertools",
  "maud",

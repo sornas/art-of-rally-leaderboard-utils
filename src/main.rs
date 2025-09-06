@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, HashMap, hash_map::Entry as HashMapEntry};
+use std::collections::{BTreeMap, HashMap};
 
 use art_of_rally_leaderboard_api::{Platform, car_name};
 use art_of_rally_leaderboard_utils::{
     Rally, RallyResults, fastest_times, get_default_rallys, get_rally_results, secret, split_times,
     table_utils::{format_delta, format_time},
 };
+use indexmap::IndexMap;
 use itertools::Itertools as _;
 use maud::{PreEscaped, html};
 use serde::{Deserialize, Serialize};
@@ -46,38 +47,141 @@ fn url_safe(s: &str) -> String {
 
 type RallyName = String;
 type StageName = String;
-type UserName = String;
-type Time = usize;
-type LocalRank = usize;
-type BestTimes = HashMap<RallyName, HashMap<StageName, HashMap<UserName, (Time, LocalRank)>>>;
 
-fn try_read_best_times() -> Option<BestTimes> {
-    ron::from_str(&std::fs::read_to_string("best_times.ron").ok()?).ok()
+#[derive(Debug)]
+enum Row {
+    // Rendered as `> {rank} {name} {time}`
+    FirstTime {
+        rank: usize,
+        name: String,
+        time: usize,
+    },
+    // Rendered as `^ {rank} {name} {time} {delta}`
+    TimeImprovedRankIncreased {
+        rank: usize,
+        name: String,
+        time: usize,
+        prev: usize,
+    },
+    // Rendered as `~ {rank} {name} {time} {delta}`
+    TimeImproved {
+        rank: usize,
+        name: String,
+        time: usize,
+        prev: usize,
+    },
+    // Rendered as `v {rank} {name} {time} {delta}`
+    TimeImprovedRankDecreased {
+        rank: usize,
+        name: String,
+        time: usize,
+        prev: usize,
+    },
+    // Rendered as `v {rank} {name} {time}`
+    RankDecreased {
+        rank: usize,
+        name: String,
+        time: usize,
+    },
 }
 
-fn write_best_times(x: &BestTimes) {
-    std::fs::write("best_times.ron", ron::to_string(x).unwrap()).unwrap();
-}
-
-type Notifications = BTreeMap<RallyName, BTreeMap<StageName, Vec<String>>>;
-
-fn send_notifications(notifications: &Notifications) {
-    let mut message = "new leaderboard records!\n\n".to_string();
-    for (rally, stages) in notifications {
-        message += &format!("\\#\\# {rally}\n\n");
-        for (stage, results) in stages {
-            if results.len() == 1 {
-                message += &format!("{stage}: {}\n", results[0]);
-            } else {
-                message += &format!("{stage}:\n");
-                for result in results {
-                    message += &format!("- {result}\n");
-                }
-            }
-            message += "\n";
+impl Row {
+    fn rank(&self) -> usize {
+        match self {
+            Row::FirstTime { rank, .. } => *rank,
+            Row::TimeImprovedRankIncreased { rank, .. } => *rank,
+            Row::TimeImproved { rank, .. } => *rank,
+            Row::TimeImprovedRankDecreased { rank, .. } => *rank,
+            Row::RankDecreased { rank, .. } => *rank,
         }
     }
-    message += "\n";
+
+    fn name(&self) -> &str {
+        match self {
+            Row::FirstTime { name, .. } => name,
+            Row::TimeImprovedRankIncreased { name, .. } => name,
+            Row::TimeImproved { name, .. } => name,
+            Row::TimeImprovedRankDecreased { name, .. } => name,
+            Row::RankDecreased { name, .. } => name,
+        }
+    }
+}
+
+type NotificationTable = IndexMap<RallyName, IndexMap<StageName, Vec<Row>>>;
+
+fn send_notification(notifications: &NotificationTable) {
+    let mut message = "```".to_string();
+    for (rally, stages) in notifications {
+        message += &format!("\n{rally}\n");
+        for (stage, rows) in stages {
+            message += &format!("  {stage}\n");
+            for row in rows {
+                let name_width = rows.iter().map(|row| row.name().len()).max().unwrap();
+                message += "    ";
+                message += &match row {
+                    Row::FirstTime { rank, name, time } => {
+                        format!(
+                            "> {}.  {:name_width$}  {}",
+                            rank,
+                            name,
+                            format_time(*time, false),
+                            name_width = name_width,
+                        )
+                    }
+                    Row::TimeImprovedRankIncreased {
+                        rank,
+                        name,
+                        time,
+                        prev,
+                    } => format!(
+                        "^ {}.  {:name_width$}  {}  {}",
+                        rank,
+                        name,
+                        format_time(*time, false),
+                        format_delta(*time, *prev, false),
+                        name_width = name_width,
+                    ),
+                    Row::TimeImproved {
+                        rank,
+                        name,
+                        time,
+                        prev,
+                    } => format!(
+                        "~ {}.  {:name_width$}  {}  {}",
+                        rank,
+                        name,
+                        format_time(*time, false),
+                        format_delta(*time, *prev, false),
+                        name_width = name_width,
+                    ),
+                    Row::TimeImprovedRankDecreased {
+                        rank,
+                        name,
+                        time,
+                        prev,
+                    } => format!(
+                        "v {}.  {:name_width$}  {}  {}",
+                        rank,
+                        name,
+                        format_time(*time, false),
+                        format_delta(*time, *prev, false),
+                        name_width = name_width,
+                    ),
+                    Row::RankDecreased { rank, name, time } => {
+                        format!(
+                            "v {}.  {:name_width$}  {}",
+                            rank,
+                            name,
+                            format_time(*time, false),
+                            name_width = name_width
+                        )
+                    }
+                };
+                message += "\n";
+            }
+        }
+    }
+    message += "```";
 
     #[derive(Serialize)]
     struct WebhookMessage {
@@ -134,95 +238,110 @@ fn download(
     })
 }
 
-fn report(db: Db) {
+fn report(db: Db, prev: Option<Db>) {
     let mut parts = Vec::new();
-    let mut pages: BTreeMap<String, Vec<_>> = BTreeMap::new();
-    let mut notifications: Notifications = BTreeMap::new();
-    let mut best_times = try_read_best_times().unwrap_or_default();
+    let mut pages: BTreeMap<String, Vec<_>> = Default::default();
+    let mut table: NotificationTable = Default::default();
+
+    for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
+        // Find corresponding previous rally by name
+        let prev_results = prev.as_ref().and_then(|prev| {
+            prev.rallys
+                .iter()
+                .zip(prev.results.iter())
+                .find_map(|(prev_rally, prev_results)| {
+                    prev_rally.title.eq(&rally.title).then_some(prev_results)
+                })
+        });
+
+        // For each user, if they drove a new record, add it to the notification table
+        for driver in &results.driver_results {
+            for (stage_idx, ((stage, _group, weather), stage_results)) in
+                rally.stages.iter().zip(driver.stages.iter()).enumerate()
+            {
+                let stage_name = format!("{stage} {weather}");
+                let Some(stage_results) = stage_results else {
+                    continue;
+                };
+                let (time, rank) = (stage_results.time_ms, stage_results.local_rank);
+
+                // Try to find the previous time
+                let prev_stage_result = prev_results
+                    .and_then(|r| {
+                        r.driver_results
+                            .iter()
+                            .find_map(|d| d.name.eq(&driver.name).then_some(&d.stages))
+                    })
+                    .and_then(|stages| stages[stage_idx].as_ref());
+                let prev_time = prev_stage_result.as_ref().map(|r| r.time_ms);
+                let prev_rank = prev_stage_result.as_ref().map(|r| r.local_rank);
+                let time_increased = prev_time.is_some_and(|prev_time| time < prev_time);
+                let rank_increased = prev_rank.is_some_and(|prev_rank| rank < prev_rank);
+                let rank_same = prev_rank.is_some_and(|prev_rank| rank == prev_rank);
+                let rank_decreased = prev_rank.is_some_and(|prev_rank| rank > prev_rank);
+
+                dbg!((
+                    &driver.name,
+                    &stage_name,
+                    (time, rank),
+                    (prev_time, prev_rank)
+                ));
+
+                let mut add_row = |x| {
+                    table
+                        .entry(rally.title.clone())
+                        .or_default()
+                        .entry(stage_name.clone())
+                        .or_default()
+                        .push(x);
+                };
+                if prev_stage_result.is_none() {
+                    add_row(Row::FirstTime {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                    });
+                } else if time_increased && rank_increased {
+                    add_row(Row::TimeImprovedRankIncreased {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                        prev: prev_time.unwrap(),
+                    });
+                } else if time_increased && rank_same {
+                    add_row(Row::TimeImproved {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                        prev: prev_time.unwrap(),
+                    });
+                } else if time_increased && rank_decreased {
+                    add_row(Row::TimeImprovedRankDecreased {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                        prev: prev_time.unwrap(),
+                    });
+                } else if rank_decreased {
+                    add_row(Row::RankDecreased {
+                        rank,
+                        name: driver.name.clone(),
+                        time,
+                    });
+                }
+            }
+        }
+    }
+
+    for stages in table.values_mut() {
+        for rows in stages.values_mut() {
+            rows.sort_by_key(Row::rank);
+        }
+    }
 
     for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
         let (full_times, partial_times) = split_times(results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, results);
-
-        let mut check_new_fastest_time =
-            |time, rank, username: String, stage, weather, stage_idx| {
-                let stage_name = format!("{stage} {weather}");
-                // Previously stored fastest time
-                let prev_fastest = best_times
-                    .entry(rally.title.clone())
-                    .or_default()
-                    .entry(stage_name.clone())
-                    .or_default()
-                    .entry(username.clone());
-                let add_notification = |msg| {
-                    notifications
-                        .entry(rally.title.clone())
-                        .or_default()
-                        .entry(stage_name)
-                        .or_default()
-                        .push(msg);
-                };
-                match prev_fastest {
-                    // No previous time
-                    HashMapEntry::Vacant(vacant) => {
-                        add_notification(format!(
-                            "{} drove their first time: {}",
-                            username,
-                            format_time(time, false),
-                        ));
-                        vacant.insert((time, rank));
-                    }
-                    HashMapEntry::Occupied(mut occupied) => {
-                        let (prev_time, prev_rank) = *occupied.get();
-                        let passed = if rank < prev_rank {
-                            let users = full_times
-                                .iter()
-                                .map(|ft| (ft.user_name, ft.local_rank[stage_idx]))
-                                .chain(partial_times.iter().filter_map(|pt| {
-                                    let rank = pt.local_rank[stage_idx]?;
-                                    Some((pt.user_name, rank))
-                                }))
-                                .filter(|(_, user_rank)| {
-                                    *user_rank > rank && *user_rank <= prev_rank
-                                })
-                                .map(|(user_name, _)| user_name)
-                                .join(", ");
-                            format!(" (passed {users})")
-                        } else {
-                            String::new()
-                        };
-                        if time < prev_time {
-                            add_notification(format!(
-                                "{} got a new pb: {} ({}){}",
-                                username,
-                                format_time(time, false),
-                                format_delta(time, prev_time, false),
-                                passed
-                            ));
-                            *(occupied.get_mut()) = (time, rank);
-                        }
-                    }
-                }
-            };
-
-        // check notifications
-        for ft in &full_times {
-            for (i, (stage, _group, weather)) in rally.stages.iter().enumerate() {
-                let (time, rank) = (ft.stage_times[i], ft.local_rank[i]);
-                check_new_fastest_time(time, rank, ft.user_name.to_string(), stage, weather, i);
-            }
-        }
-        for pt in &partial_times {
-            for (i, (stage, _group, weather)) in rally.stages.iter().enumerate() {
-                let Some(time) = pt.stage_times[i] else {
-                    continue;
-                };
-                let Some(rank) = pt.local_rank[i] else {
-                    continue;
-                };
-                check_new_fastest_time(time, rank, pt.user_name.to_string(), stage, weather, i);
-            }
-        }
 
         parts.push(html!(h2 { (rally.title) }));
         // Total results table for each rally. (stages) x (drivers).
@@ -380,11 +499,11 @@ fn report(db: Db) {
         }
     }
 
-    if !notifications.is_empty() {
-        send_notifications(&notifications);
-    }
+    dbg!(&table);
 
-    write_best_times(&best_times);
+    if !table.is_empty() {
+        send_notification(&table);
+    }
 
     std::fs::write(
         "public/index.html",
@@ -401,15 +520,25 @@ fn report(db: Db) {
 }
 
 fn main() -> Result<(), Whatever> {
+    std::fs::create_dir_all("data").unwrap();
+
     let rallys = get_default_rallys();
     let (platform, user_ids, user_names, discord_ids) = secret::users();
 
     let db = download(rallys, platform, user_ids, user_names, discord_ids)?;
     let ts = chrono::Utc::now().timestamp();
 
-    std::fs::create_dir_all("data").unwrap();
+    let prev = std::fs::read_dir("data")
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .sorted()
+        .last()
+        .map(|path| ron::from_str(&std::fs::read_to_string(path).unwrap()).unwrap());
+
     std::fs::write(format!("data/{ts}.ron"), ron::to_string(&db).unwrap()).unwrap();
-    report(db);
+
+    report(db, prev);
 
     Ok(())
 }
