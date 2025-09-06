@@ -1,2 +1,5 @@
+/cache
+/data
+/public
 /target
 src/secret.rs
