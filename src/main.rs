@@ -501,7 +501,7 @@ fn report(db: Db, prev: Option<Db>) {
 
     dbg!(&table);
 
-    if !table.is_empty() {
+    if prev.is_some() && !table.is_empty() {
         send_notification(&table);
     }
 
