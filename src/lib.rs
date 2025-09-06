@@ -26,6 +26,7 @@ pub struct DriverResult {
 pub struct RallyResults {
     pub stages: Vec<StageWithLeaderboard>,
     pub driver_results: Vec<DriverResult>,
+    pub stage_results: Vec<Vec<(String, StageResult)>>,
 }
 
 #[derive(Clone)]
@@ -78,6 +79,11 @@ pub fn get_rally_results(
     user_ids: &[u64],
     user_names: &[&str],
 ) -> Result<RallyResults, Whatever> {
+    let stages = leaderboards
+        .iter()
+        .copied()
+        .map(|(stage, _)| stage)
+        .collect_vec();
     let result_urls: Vec<_> = leaderboards
         .iter()
         .copied()
@@ -154,19 +160,30 @@ pub fn get_rally_results(
         }
     }
 
+    let mut stage_results = stages.iter().map(|_| Vec::new()).collect_vec();
+    for (driver, driver_stage_results) in &driver_results {
+        for (i, driver_stage_result) in driver_stage_results.iter().enumerate() {
+            let Some(driver_stage_result) = driver_stage_result else {
+                continue;
+            };
+            stage_results[i].push((driver.clone(), driver_stage_result.clone()));
+        }
+    }
+    for stage_result in &mut stage_results {
+        stage_result.sort_by_key(|(_, x)| x.time_ms);
+    }
+
     Ok(RallyResults {
-        stages: leaderboards
-            .iter()
-            .copied()
-            .map(|(stage, _)| stage)
-            .collect(),
+        stages,
         driver_results: driver_results
             .into_iter()
             .map(|(name, stages)| DriverResult { name, stages })
             .collect(),
+        stage_results,
     })
 }
 
+#[derive(Debug)]
 pub struct FullTime<'s> {
     pub total_time: usize,
     pub user_name: &'s str,
@@ -176,6 +193,7 @@ pub struct FullTime<'s> {
     pub cars: Vec<usize>,
 }
 
+#[derive(Debug)]
 pub struct PartialTime<'s> {
     pub finished_stages: usize,
     pub total_time: usize,

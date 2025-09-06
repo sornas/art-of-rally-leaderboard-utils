@@ -86,40 +86,13 @@ fn send_notifications(notifications: &Notifications) {
     }
 
     println!("sending notification...");
-    println!(
-        "{:?}",
-        ureq::post(secret::WEBHOOK_URL)
-            .send_json(&WebhookMessage {
-                content: message,
-                allowed_mentions: [("parse".to_string(), vec![])].into_iter().collect()
-            })
-            .unwrap()
-            .status()
-    );
-}
-
-#[allow(unused)]
-fn main2() {
-    let default_message = "<@165534811736375296> got a new pb: 1:47.812 (-0:01.058)".to_string();
-    let mut notifications: BTreeMap<RallyName, BTreeMap<StageName, Vec<String>>> = BTreeMap::new();
-    let norway_rally = notifications
-        .entry("norway - group 4".to_string())
-        .or_default();
-    let rostavatn = norway_rally
-        .entry("lake rostavatn dry".to_string())
-        .or_default();
-    rostavatn.push(default_message.clone());
-    rostavatn.push(default_message.clone());
-    let kenya_rally = notifications
-        .entry("kenya - group b".to_string())
-        .or_default();
-    let stage1 = kenya_rally.entry("stage 1 dry".to_string()).or_default();
-    stage1.push(default_message.clone());
-    let stage2 = kenya_rally.entry("stage 2 night".to_string()).or_default();
-    stage2.push(default_message.clone());
-    stage2.push(default_message.clone());
-
-    send_notifications(&notifications);
+    match ureq::post(secret::WEBHOOK_URL).send_json(&WebhookMessage {
+        content: message,
+        allowed_mentions: [("parse".to_string(), vec![])].into_iter().collect(),
+    }) {
+        Ok(mut r) => println!("{:?}: {:?}", r.status(), r.body_mut().read_to_string()),
+        Err(e) => println!("{e:?}"),
+    }
 }
 
 fn main() -> Result<(), Whatever> {
@@ -136,63 +109,84 @@ fn main() -> Result<(), Whatever> {
     let mut notifications: Notifications = BTreeMap::new();
     let mut best_times = try_read_best_times().unwrap_or_default();
 
-    for Rally { title, stages } in rallys {
+    for Rally {
+        title: rally_title,
+        stages,
+    } in rallys
+    {
         let leaderboards: Vec<_> = stages.iter().map(|stage| (*stage, platform)).collect();
         let results = get_rally_results(&leaderboards, &user_ids, &user_names)?;
         let (full_times, partial_times) = split_times(&results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, &results);
 
-        let mut add_notification = |time, rank, username: String, stage, weather, stage_idx| {
-            let stage_name = format!("{stage} {weather}");
-            let prev_fastest = best_times
-                .entry(title.clone())
-                .or_default()
-                .entry(stage_name.clone())
-                .or_default()
-                .entry(username.clone());
-            match prev_fastest {
-                HashMapEntry::Vacant(vacant) => {
-                    vacant.insert((time, rank));
-                }
-                HashMapEntry::Occupied(mut occupied) => {
-                    let (prev_time, prev_rank) = *occupied.get();
-                    let passed = if rank < prev_rank {
-                        let users = full_times
-                            .iter()
-                            .filter(|ft| {
-                                let ft_rank = ft.local_rank[stage_idx];
-                                ft_rank > rank && ft_rank <= prev_rank
-                            })
-                            .map(|ft| format!("<@{}>", id_lookup.get(ft.user_name).unwrap()))
-                            .join(", ");
-                        format!(" (passed {users})")
-                    } else {
-                        String::new()
-                    };
-                    if time < prev_time {
-                        notifications
-                            .entry(title.clone())
-                            .or_default()
-                            .entry(stage_name)
-                            .or_default()
-                            .push(format!(
-                                "<@{}> got a new pb: {} ({}){}",
-                                id_lookup.get(username.as_str()).unwrap(),
+        let mut check_new_fastest_time =
+            |time, rank, username: String, stage, weather, stage_idx| {
+                let stage_name = format!("{stage} {weather}");
+                // Previously stored fastest time
+                let prev_fastest = best_times
+                    .entry(rally_title.clone())
+                    .or_default()
+                    .entry(stage_name.clone())
+                    .or_default()
+                    .entry(username.clone());
+                let add_notification = |msg| {
+                    notifications
+                        .entry(rally_title.clone())
+                        .or_default()
+                        .entry(stage_name)
+                        .or_default()
+                        .push(msg);
+                };
+                match prev_fastest {
+                    // No previous time
+                    HashMapEntry::Vacant(vacant) => {
+                        add_notification(format!(
+                            "{} drove their first time: {}",
+                            username,
+                            format_time(time, false),
+                        ));
+                        vacant.insert((time, rank));
+                    }
+                    HashMapEntry::Occupied(mut occupied) => {
+                        let (prev_time, prev_rank) = *occupied.get();
+                        let passed = if rank < prev_rank {
+                            let users = full_times
+                                .iter()
+                                .map(|ft| (ft.user_name, ft.local_rank[stage_idx]))
+                                .chain(partial_times.iter().filter_map(|pt| {
+                                    let rank = pt.local_rank[stage_idx]?;
+                                    Some((pt.user_name, rank))
+                                }))
+                                .filter(|(_, user_rank)| {
+                                    *user_rank > rank && *user_rank <= prev_rank
+                                })
+                                .map(|(user_name, _)| {
+                                    format!("<@{}>", id_lookup.get(user_name).unwrap())
+                                })
+                                .join(", ");
+                            format!(" (passed {users})")
+                        } else {
+                            String::new()
+                        };
+                        if time < prev_time {
+                            add_notification(format!(
+                                "{} got a new pb: {} ({}){}",
+                                username,
                                 format_time(time, false),
                                 format_delta(time, prev_time, false),
                                 passed
                             ));
-                        *(occupied.get_mut()) = (time, rank);
+                            *(occupied.get_mut()) = (time, rank);
+                        }
                     }
                 }
-            }
-        };
+            };
 
         // check notifications
         for ft in &full_times {
             for (i, (stage, _group, weather)) in stages.iter().enumerate() {
                 let (time, rank) = (ft.stage_times[i], ft.local_rank[i]);
-                add_notification(time, rank, ft.user_name.to_string(), stage, weather, i);
+                check_new_fastest_time(time, rank, ft.user_name.to_string(), stage, weather, i);
             }
         }
         for pt in &partial_times {
@@ -203,11 +197,11 @@ fn main() -> Result<(), Whatever> {
                 let Some(rank) = pt.local_rank[i] else {
                     continue;
                 };
-                add_notification(time, rank, pt.user_name.to_string(), stage, weather, i);
+                check_new_fastest_time(time, rank, pt.user_name.to_string(), stage, weather, i);
             }
         }
 
-        parts.push(html!(h2 { (title) }));
+        parts.push(html!(h2 { (rally_title) }));
         // Total results table for each rally. (stages) x (drivers).
         parts.push(html!(
             table class="rally" {
@@ -266,7 +260,7 @@ fn main() -> Result<(), Whatever> {
         // For each driver, in-depth stats for each stage
         for driver in &results.driver_results {
             pages.entry(driver.name.clone()).or_default().push(html!(
-                h2 { (title) }
+                h2 { (rally_title) }
                 table class="driver" {
                     thead {
                         th { "stage" }
