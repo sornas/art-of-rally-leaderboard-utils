@@ -123,6 +123,13 @@ impl Row {
 type NotificationTable = IndexMap<RallyName, IndexMap<StageName, Vec<Row>>>;
 
 fn send_notification(notifications: &NotificationTable) {
+    if notifications
+        .values()
+        .flat_map(|stages| stages.values().flatten())
+        .all(Row::is_unchanged)
+    {
+        return;
+    }
     let mut message = "```".to_string();
     for (rally, stages) in notifications {
         // Skip rallys where all rows are unchanged
@@ -545,7 +552,7 @@ fn report(db: Db, prev: Option<Db>) {
 
     dbg!(&table);
 
-    if prev.is_some() && !table.is_empty() {
+    if prev.is_some() {
         send_notification(&table);
     }
 
