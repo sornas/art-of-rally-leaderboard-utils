@@ -281,8 +281,6 @@ fn download(
 }
 
 fn report(db: Db, prev: Option<Db>) {
-    let mut parts = Vec::new();
-    let mut pages: BTreeMap<String, Vec<_>> = Default::default();
     let mut table: NotificationTable = Default::default();
 
     for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
@@ -390,13 +388,19 @@ fn report(db: Db, prev: Option<Db>) {
         }
     }
 
+    let mut interval_parts =
+        vec![html!(div { "interval time | " a href="/absolute.html" { "absolute time" }})];
+    let mut absolute_parts =
+        vec![html!(div { a href = "/index.html" { "interval time" } " | absolute time" })];
+    let mut pages: BTreeMap<String, Vec<_>> = Default::default();
+
     for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
         let (full_times, partial_times) = split_times(results);
         let (fastest_total, fastest_stages) = fastest_times(&full_times, results);
 
-        parts.push(html!(h2 { (rally.title) }));
-        // Total results table for each rally. (stages) x (drivers).
-        parts.push(html!(
+        interval_parts.push(html!(h2 { (rally.title) }));
+        // Total interval results table for each rally. (stages) x (drivers).
+        interval_parts.push(html!(
             table class="rally" {
                 thead {
                     th { "driver" }
@@ -440,6 +444,62 @@ fn report(db: Db, prev: Option<Db>) {
                                     td class="fastest" { (format_time(time, false)) }
                                 } @else {
                                     td { (format_delta(time, fast, false)) }
+                                }
+                            } @else {
+                                td { }
+                            }
+                        }
+                    }
+                }
+            }
+        ));
+
+        absolute_parts.push(html!(h2 { (rally.title) }));
+        // Total absolute results table for each rally. (stages) x (drivers).
+        absolute_parts.push(html!(
+            table class="rally" {
+                thead {
+                    th { "driver" }
+                    th { }
+                    th { "total" }
+                    @for (stage, _group, weather) in &rally.stages {
+                        th { a href=(format!("/{}.html", url_safe(&format!("{stage} {weather}")))) { (stage) " (" (weather) ")" } }
+                    }
+                }
+                @for ft in &full_times {
+                    tr {
+                        td { a href=(format!("/{}.html", url_safe(&ft.user_name))) { (ft.user_name) } }
+                        td { }
+                        @let total = ft.total_time;
+                        @let fastest_total = fastest_total.unwrap();
+                        @if total == fastest_total {
+                            td class="fastest" { (format_time(total, true)) }
+                        } @else {
+                            td { (format_time(total, true)) }
+                        }
+                        @for (i, time) in ft.stage_times.iter().copied().enumerate() {
+                            @let fast = fastest_stages[i].unwrap();
+                            @if time == fast {
+                                td class="fastest" { (format_time(time, false)) }
+                            } @else {
+                                td { (format_time(time, false)) }
+                            }
+                        }
+                    }
+                }
+                @for pt in &partial_times {
+                    tr {
+                        td { a href=(format!("/{}.html", url_safe(&pt.user_name))) { (pt.user_name) } }
+                        td { "*" }
+                        @let total = pt.total_time;
+                        td { (format_time(total, true)) }
+                        @for (i, time) in pt.stage_times.iter().copied().enumerate() {
+                            @if let Some(time) = time {
+                                @let fast = fastest_stages[i].unwrap();
+                                @if time == fast {
+                                    td class="fastest" { (format_time(time, false)) }
+                                } @else {
+                                    td { (format_time(time, false)) }
                                 }
                             } @else {
                                 td { }
@@ -558,7 +618,12 @@ fn report(db: Db, prev: Option<Db>) {
 
     std::fs::write(
         "public/index.html",
-        html_page("basvektorernas art of rally-leaderboard", &parts).into_string(),
+        html_page("basvektorernas art of rally-leaderboard", &interval_parts).into_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        "public/absolute.html",
+        html_page("basvektorernas art of rally-leaderboard", &absolute_parts).into_string(),
     )
     .unwrap();
     for (user, parts) in &pages {
