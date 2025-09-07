@@ -83,6 +83,13 @@ enum Row {
         name: String,
         time: usize,
     },
+    // Rendered as `  {rank} {name} {time}` if active is true
+    Unchanged {
+        active: bool,
+        rank: usize,
+        name: String,
+        time: usize,
+    },
 }
 
 impl Row {
@@ -93,6 +100,7 @@ impl Row {
             Row::TimeImproved { rank, .. } => *rank,
             Row::TimeImprovedRankDecreased { rank, .. } => *rank,
             Row::RankDecreased { rank, .. } => *rank,
+            Row::Unchanged { rank, .. } => *rank,
         }
     }
 
@@ -103,7 +111,12 @@ impl Row {
             Row::TimeImproved { name, .. } => name,
             Row::TimeImprovedRankDecreased { name, .. } => name,
             Row::RankDecreased { name, .. } => name,
+            Row::Unchanged { name, .. } => name,
         }
+    }
+
+    fn is_unchanged(&self) -> bool {
+        matches!(self, Row::Unchanged { .. })
     }
 }
 
@@ -112,16 +125,23 @@ type NotificationTable = IndexMap<RallyName, IndexMap<StageName, Vec<Row>>>;
 fn send_notification(notifications: &NotificationTable) {
     let mut message = "```".to_string();
     for (rally, stages) in notifications {
+        // Skip rallys where all rows are unchanged
+        if stages.values().flatten().all(Row::is_unchanged) {
+            continue;
+        }
         message += &format!("\n{rally}\n");
         for (stage, rows) in stages {
+            // Skip stages where all rows are unchanged
+            if rows.iter().all(Row::is_unchanged) {
+                continue;
+            }
             message += &format!("  {stage}\n");
             for row in rows {
                 let name_width = rows.iter().map(|row| row.name().len()).max().unwrap();
-                message += "    ";
                 message += &match row {
                     Row::FirstTime { rank, name, time } => {
                         format!(
-                            "> {}.  {:name_width$}  {}",
+                            "    > {}.  {:name_width$}  {}",
                             rank,
                             name,
                             format_time(*time, false),
@@ -134,7 +154,7 @@ fn send_notification(notifications: &NotificationTable) {
                         time,
                         prev,
                     } => format!(
-                        "^ {}.  {:name_width$}  {}  {}",
+                        "    ^ {}.  {:name_width$}  {}  {}",
                         rank,
                         name,
                         format_time(*time, false),
@@ -147,7 +167,7 @@ fn send_notification(notifications: &NotificationTable) {
                         time,
                         prev,
                     } => format!(
-                        "~ {}.  {:name_width$}  {}  {}",
+                        "    ~ {}.  {:name_width$}  {}  {}",
                         rank,
                         name,
                         format_time(*time, false),
@@ -160,7 +180,7 @@ fn send_notification(notifications: &NotificationTable) {
                         time,
                         prev,
                     } => format!(
-                        "v {}.  {:name_width$}  {}  {}",
+                        "    v {}.  {:name_width$}  {}  {}",
                         rank,
                         name,
                         format_time(*time, false),
@@ -169,13 +189,28 @@ fn send_notification(notifications: &NotificationTable) {
                     ),
                     Row::RankDecreased { rank, name, time } => {
                         format!(
-                            "v {}.  {:name_width$}  {}",
+                            "    v {}.  {:name_width$}  {}",
                             rank,
                             name,
                             format_time(*time, false),
                             name_width = name_width
                         )
                     }
+                    Row::Unchanged {
+                        active: true,
+                        rank,
+                        name,
+                        time,
+                    } => {
+                        format!(
+                            "      {}.  {:name_width$}  {}",
+                            rank,
+                            name,
+                            format_time(*time, false),
+                            name_width = name_width
+                        )
+                    }
+                    Row::Unchanged { active: false, .. } => continue,
                 };
                 message += "\n";
             }
@@ -287,6 +322,7 @@ fn report(db: Db, prev: Option<Db>) {
                     (prev_time, prev_rank)
                 ));
 
+                let name = driver.name.clone();
                 let mut add_row = |x| {
                     table
                         .entry(rally.title.clone())
@@ -296,38 +332,37 @@ fn report(db: Db, prev: Option<Db>) {
                         .push(x);
                 };
                 if prev_stage_result.is_none() {
-                    add_row(Row::FirstTime {
-                        rank,
-                        name: driver.name.clone(),
-                        time,
-                    });
+                    add_row(Row::FirstTime { rank, name, time });
                 } else if time_increased && rank_increased {
                     add_row(Row::TimeImprovedRankIncreased {
                         rank,
-                        name: driver.name.clone(),
+                        name,
                         time,
                         prev: prev_time.unwrap(),
                     });
                 } else if time_increased && rank_same {
                     add_row(Row::TimeImproved {
                         rank,
-                        name: driver.name.clone(),
+                        name,
                         time,
                         prev: prev_time.unwrap(),
                     });
                 } else if time_increased && rank_decreased {
                     add_row(Row::TimeImprovedRankDecreased {
                         rank,
-                        name: driver.name.clone(),
+                        name,
                         time,
                         prev: prev_time.unwrap(),
                     });
                 } else if rank_decreased {
-                    add_row(Row::RankDecreased {
+                    add_row(Row::RankDecreased { rank, name, time });
+                } else {
+                    add_row(Row::Unchanged {
+                        active: false,
                         rank,
-                        name: driver.name.clone(),
+                        name,
                         time,
-                    });
+                    })
                 }
             }
         }
@@ -336,6 +371,15 @@ fn report(db: Db, prev: Option<Db>) {
     for stages in table.values_mut() {
         for rows in stages.values_mut() {
             rows.sort_by_key(Row::rank);
+
+            for i in 0..rows.len() - 1 {
+                let (head, tail) = rows.split_at_mut(i + 1);
+                if let Row::Unchanged { active, .. } = &mut head[i]
+                    && !matches!(tail[0], Row::Unchanged { .. })
+                {
+                    *active = true;
+                }
+            }
         }
     }
 
@@ -420,7 +464,7 @@ fn report(db: Db, prev: Option<Db>) {
                             td class="time" { (format_time(time, false)) }
                             @let fast = fastest_stages[i].unwrap();
                             @if time == fast {
-                                td class="interval" { "-:--:---" }
+                                td class="interval" { "-:--.---" }
                             } @else {
                                 td class="interval" { (format_delta(time, fast, false)) }
                             }
@@ -482,7 +526,7 @@ fn report(db: Db, prev: Option<Db>) {
                             td { a href=(format!("/{}.html", url_safe(&time.name))) { (time.name) } }
                             td class="time" { (format_time(time.time, false)) }
                             @if time.time == fast {
-                                td class="interval" { "-:--:---" }
+                                td class="interval" { "-:--.---" }
                             } @else {
                                 td class="interval" { (format_delta(time.time, fast, false)) }
                             }
@@ -537,6 +581,12 @@ fn main() -> Result<(), Whatever> {
         .map(|path| ron::from_str(&std::fs::read_to_string(path).unwrap()).unwrap());
 
     std::fs::write(format!("data/{ts}.ron"), ron::to_string(&db).unwrap()).unwrap();
+
+    // let db =
+    //     ron::from_str(&std::fs::read_to_string(std::env::args().nth(2).unwrap()).unwrap()).unwrap();
+    // let prev = Some(
+    //     ron::from_str(&std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap()).unwrap(),
+    // );
 
     report(db, prev);
 
