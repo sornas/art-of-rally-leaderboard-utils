@@ -1,15 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
 
 use art_of_rally_leaderboard_api::{Platform, car_name};
+use art_of_rally_leaderboard_utils::config::Config;
+use art_of_rally_leaderboard_utils::table_utils::{format_delta, format_time};
 use art_of_rally_leaderboard_utils::{
-    Rally, RallyResults, fastest_times, get_default_rallys, get_rally_results, secret, split_times,
-    table_utils::{format_delta, format_time},
+    Rally, RallyResults, fastest_times, get_default_rallys, get_rally_results, split_times,
 };
 use indexmap::IndexMap;
 use itertools::Itertools as _;
 use maud::{PreEscaped, html};
 use serde::{Deserialize, Serialize};
-use snafu::Whatever;
+use snafu::{ResultExt as _, Whatever};
 
 fn html_page<'a>(
     header: &str,
@@ -122,7 +123,7 @@ impl Row {
 
 type NotificationTable = IndexMap<RallyName, IndexMap<StageName, Vec<Row>>>;
 
-fn send_notification(notifications: &NotificationTable) {
+fn send_notification(notifications: &NotificationTable, webhook_url: &str) {
     if notifications
         .values()
         .flat_map(|stages| stages.values().flatten())
@@ -233,7 +234,7 @@ fn send_notification(notifications: &NotificationTable) {
 
     println!("{message}");
     println!("sending notification...");
-    match ureq::post(secret::WEBHOOK_URL).send_json(&WebhookMessage {
+    match ureq::post(webhook_url).send_json(&WebhookMessage {
         content: message,
         allowed_mentions: [("parse".to_string(), vec![])].into_iter().collect(),
     }) {
@@ -249,15 +250,13 @@ struct Db {
     platform: Platform,
     user_ids: Vec<u64>,
     user_names: Vec<String>,
-    discord_ids: Vec<String>,
 }
 
 fn download(
     rallys: Vec<Rally>,
     platform: Platform,
     user_ids: Vec<u64>,
-    user_names: Vec<&'static str>,
-    discord_ids: Vec<&'static str>,
+    user_names: Vec<&str>,
 ) -> Result<Db, Whatever> {
     let mut results = Vec::new();
     for rally in &rallys {
@@ -276,11 +275,10 @@ fn download(
         platform,
         user_ids,
         user_names: user_names.into_iter().map(str::to_string).collect(),
-        discord_ids: discord_ids.into_iter().map(str::to_string).collect(),
     })
 }
 
-fn report(db: Db, prev: Option<Db>) {
+fn report(db: Db, prev: Option<Db>, webhook_url: &str) {
     let mut table: NotificationTable = Default::default();
 
     for (rally, results) in db.rallys.iter().zip(db.results.iter()) {
@@ -613,7 +611,7 @@ fn report(db: Db, prev: Option<Db>) {
     dbg!(&table);
 
     if prev.is_some() {
-        send_notification(&table);
+        send_notification(&table, webhook_url);
     }
 
     std::fs::write(
@@ -635,32 +633,44 @@ fn report(db: Db, prev: Option<Db>) {
     }
 }
 
-fn main() -> Result<(), Whatever> {
-    std::fs::create_dir_all("data").unwrap();
+fn main() {
+    let res = (|| -> Result<(), Whatever> {
+        let config_str = std::fs::read_to_string("art-of-rally.toml")
+            .with_whatever_context(|e| format!("Couldn't open config file\n{e}"))?;
+        let config: Config = toml::from_str(&config_str)
+            .with_whatever_context(|e| format!("Couldn't parse config file\n{e}"))?;
 
-    let rallys = get_default_rallys();
-    let (platform, user_ids, user_names, discord_ids) = secret::users();
+        std::fs::create_dir_all("data").unwrap();
 
-    let db = download(rallys, platform, user_ids, user_names, discord_ids)?;
-    let ts = chrono::Utc::now().timestamp();
+        let rallys = get_default_rallys();
+        let (user_ids, user_names) = config.users();
 
-    let prev = std::fs::read_dir("data")
-        .unwrap()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .sorted()
-        .last()
-        .map(|path| ron::from_str(&std::fs::read_to_string(path).unwrap()).unwrap());
+        let db = download(rallys, config.platform, user_ids, user_names)?;
+        let ts = chrono::Utc::now().timestamp();
 
-    std::fs::write(format!("data/{ts}.ron"), ron::to_string(&db).unwrap()).unwrap();
+        let prev = std::fs::read_dir("data")
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .sorted()
+            .last()
+            .map(|path| ron::from_str(&std::fs::read_to_string(path).unwrap()).unwrap());
 
-    // let db =
-    //     ron::from_str(&std::fs::read_to_string(std::env::args().nth(2).unwrap()).unwrap()).unwrap();
-    // let prev = Some(
-    //     ron::from_str(&std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap()).unwrap(),
-    // );
+        std::fs::write(format!("data/{ts}.ron"), ron::to_string(&db).unwrap()).unwrap();
 
-    report(db, prev);
+        // let db =
+        //     ron::from_str(&std::fs::read_to_string(std::env::args().nth(2).unwrap()).unwrap()).unwrap();
+        // let prev = Some(
+        //     ron::from_str(&std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap()).unwrap(),
+        // );
 
-    Ok(())
+        report(db, prev, &config.webhook_url);
+
+        Ok(())
+    })();
+
+    match res {
+        Ok(_) => {}
+        Err(e) => eprintln!("{e}"),
+    }
 }

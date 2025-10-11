@@ -7,8 +7,8 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use snafu::Whatever;
 
+pub mod config;
 pub mod http;
-pub mod secret;
 pub mod table_utils;
 
 pub type StageWithLeaderboard = (Stage, Group, Weather);
