@@ -29,6 +29,7 @@ pub struct DriverResult {
 pub struct RallyResults {
     pub stages: Vec<StageWithLeaderboard>,
     pub driver_results: Vec<DriverResult>,
+    // For each stage, a list of driver names and their result
     pub stage_results: Vec<Vec<(String, StageResult)>>,
 }
 
@@ -190,6 +191,7 @@ pub fn get_rally_results(
 #[derive(Debug)]
 pub struct FullTime<'s> {
     pub total_time: usize,
+    pub total_local_rank: usize,
     pub user_name: &'s str,
     pub stage_times: Vec<usize>,
     pub local_rank: Vec<usize>,
@@ -235,6 +237,7 @@ pub fn split_times(rally: &RallyResults) -> (Vec<FullTime<'_>>, Vec<PartialTime<
         if is_full {
             full_times.push(FullTime {
                 total_time,
+                total_local_rank: 0, // Need to load all full times before we can set the actual value
                 user_name: driver.name.as_str(),
                 stage_times: times.map(|o| o.unwrap()).collect(),
                 local_rank: local_rank.map(|o| o.unwrap()).collect(),
@@ -254,6 +257,11 @@ pub fn split_times(rally: &RallyResults) -> (Vec<FullTime<'_>>, Vec<PartialTime<
         }
     }
     full_times.sort_by_key(|ft| ft.total_time);
+    // All times are sorted, so now we can set the total local rank
+    full_times
+        .iter_mut()
+        .enumerate()
+        .for_each(|(i, ft)| ft.total_local_rank = i + 1);
     // sort partialtimes first by amount of finished stages (largest first), then by total time (smallest first)
     partial_times.sort_by(|pt1, pt2| {
         pt2.finished_stages
