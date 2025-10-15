@@ -119,25 +119,114 @@ impl Row {
     fn is_unchanged(&self) -> bool {
         matches!(self, Row::Unchanged { .. })
     }
+
+    fn message(&self, indent: usize, name_width: usize) -> Option<String> {
+        match self {
+            Row::FirstTime { rank, name, time } => Some(format!(
+                "{}> {}.  {:name_width$}  {}",
+                " ".repeat(indent),
+                rank,
+                name,
+                format_time(*time, false),
+                name_width = name_width,
+            )),
+            Row::TimeImprovedRankIncreased {
+                rank,
+                name,
+                time,
+                prev,
+            } => Some(format!(
+                "{}^ {}.  {:name_width$}  {}  {}",
+                " ".repeat(indent),
+                rank,
+                name,
+                format_time(*time, false),
+                format_delta(*time, *prev, false),
+                name_width = name_width,
+            )),
+            Row::TimeImproved {
+                rank,
+                name,
+                time,
+                prev,
+            } => Some(format!(
+                "{}~ {}.  {:name_width$}  {}  {}",
+                " ".repeat(indent),
+                rank,
+                name,
+                format_time(*time, false),
+                format_delta(*time, *prev, false),
+                name_width = name_width,
+            )),
+            Row::TimeImprovedRankDecreased {
+                rank,
+                name,
+                time,
+                prev,
+            } => Some(format!(
+                "{}v {}.  {:name_width$}  {}  {}",
+                " ".repeat(indent),
+                rank,
+                name,
+                format_time(*time, false),
+                format_delta(*time, *prev, false),
+                name_width = name_width,
+            )),
+            Row::RankDecreased { rank, name, time } => Some(format!(
+                "{}v {}.  {:name_width$}  {}",
+                " ".repeat(indent),
+                rank,
+                name,
+                format_time(*time, false),
+                name_width = name_width
+            )),
+            Row::Unchanged {
+                active: true,
+                rank,
+                name,
+                time,
+            } => Some(format!(
+                "{}  {}.  {:name_width$}  {}",
+                " ".repeat(indent),
+                rank,
+                name,
+                format_time(*time, false),
+                name_width = name_width
+            )),
+            Row::Unchanged { active: false, .. } => None,
+        }
+    }
 }
 
-type NotificationTable = IndexMap<RallyName, IndexMap<StageName, Vec<Row>>>;
+// { rally => (total_time, { stage => stage_time }) }
+type NotificationTable = IndexMap<RallyName, (Vec<Row>, IndexMap<StageName, Vec<Row>>)>;
 
 fn send_notification(notifications: &NotificationTable, webhook_url: &str) {
     if notifications
         .values()
-        .flat_map(|stages| stages.values().flatten())
+        .flat_map(|(rally, stages)| rally.iter().chain(stages.values().flatten()))
         .all(Row::is_unchanged)
     {
         return;
     }
     let mut message = "```".to_string();
-    for (rally, stages) in notifications {
+    for (rally_name, (rally, stages)) in notifications {
         // Skip rallys where all rows are unchanged
-        if stages.values().flatten().all(Row::is_unchanged) {
+        if rally
+            .iter()
+            .chain(stages.values().flatten())
+            .all(Row::is_unchanged)
+        {
             continue;
         }
-        message += &format!("\n{rally}\n");
+        message += &format!("\n{rally_name}\n");
+        let name_width = rally.iter().map(|row| row.name().len()).max().unwrap();
+        for row in rally {
+            if let Some(row_message) = row.message(2, name_width) {
+                message += &row_message;
+                message += "\n";
+            }
+        }
         for (stage, rows) in stages {
             // Skip stages where all rows are unchanged
             if rows.iter().all(Row::is_unchanged) {
@@ -146,81 +235,10 @@ fn send_notification(notifications: &NotificationTable, webhook_url: &str) {
             message += &format!("  {stage}\n");
             for row in rows {
                 let name_width = rows.iter().map(|row| row.name().len()).max().unwrap();
-                message += &match row {
-                    Row::FirstTime { rank, name, time } => {
-                        format!(
-                            "    > {}.  {:name_width$}  {}",
-                            rank,
-                            name,
-                            format_time(*time, false),
-                            name_width = name_width,
-                        )
-                    }
-                    Row::TimeImprovedRankIncreased {
-                        rank,
-                        name,
-                        time,
-                        prev,
-                    } => format!(
-                        "    ^ {}.  {:name_width$}  {}  {}",
-                        rank,
-                        name,
-                        format_time(*time, false),
-                        format_delta(*time, *prev, false),
-                        name_width = name_width,
-                    ),
-                    Row::TimeImproved {
-                        rank,
-                        name,
-                        time,
-                        prev,
-                    } => format!(
-                        "    ~ {}.  {:name_width$}  {}  {}",
-                        rank,
-                        name,
-                        format_time(*time, false),
-                        format_delta(*time, *prev, false),
-                        name_width = name_width,
-                    ),
-                    Row::TimeImprovedRankDecreased {
-                        rank,
-                        name,
-                        time,
-                        prev,
-                    } => format!(
-                        "    v {}.  {:name_width$}  {}  {}",
-                        rank,
-                        name,
-                        format_time(*time, false),
-                        format_delta(*time, *prev, false),
-                        name_width = name_width,
-                    ),
-                    Row::RankDecreased { rank, name, time } => {
-                        format!(
-                            "    v {}.  {:name_width$}  {}",
-                            rank,
-                            name,
-                            format_time(*time, false),
-                            name_width = name_width
-                        )
-                    }
-                    Row::Unchanged {
-                        active: true,
-                        rank,
-                        name,
-                        time,
-                    } => {
-                        format!(
-                            "      {}.  {:name_width$}  {}",
-                            rank,
-                            name,
-                            format_time(*time, false),
-                            name_width = name_width
-                        )
-                    }
-                    Row::Unchanged { active: false, .. } => continue,
-                };
-                message += "\n";
+                if let Some(row_message) = row.message(4, name_width) {
+                    message += &row_message;
+                    message += "\n";
+                }
             }
         }
     }
@@ -326,41 +344,42 @@ fn report(db: Db, prev: Option<Db>, webhook_url: &str) {
                 ));
 
                 let name = driver.name.clone();
-                let mut add_row = |x| {
+                let mut add_stage_row = |row| {
                     table
                         .entry(rally.title.clone())
                         .or_default()
+                        .1
                         .entry(stage_name.clone())
                         .or_default()
-                        .push(x);
+                        .push(row);
                 };
                 if prev_stage_result.is_none() {
-                    add_row(Row::FirstTime { rank, name, time });
+                    add_stage_row(Row::FirstTime { rank, name, time });
                 } else if time_increased && rank_increased {
-                    add_row(Row::TimeImprovedRankIncreased {
+                    add_stage_row(Row::TimeImprovedRankIncreased {
                         rank,
                         name,
                         time,
                         prev: prev_time.unwrap(),
                     });
                 } else if time_increased && rank_same {
-                    add_row(Row::TimeImproved {
+                    add_stage_row(Row::TimeImproved {
                         rank,
                         name,
                         time,
                         prev: prev_time.unwrap(),
                     });
                 } else if time_increased && rank_decreased {
-                    add_row(Row::TimeImprovedRankDecreased {
+                    add_stage_row(Row::TimeImprovedRankDecreased {
                         rank,
                         name,
                         time,
                         prev: prev_time.unwrap(),
                     });
                 } else if rank_decreased {
-                    add_row(Row::RankDecreased { rank, name, time });
+                    add_stage_row(Row::RankDecreased { rank, name, time });
                 } else {
-                    add_row(Row::Unchanged {
+                    add_stage_row(Row::Unchanged {
                         active: false,
                         rank,
                         name,
@@ -368,23 +387,86 @@ fn report(db: Db, prev: Option<Db>, webhook_url: &str) {
                     })
                 }
             }
-        }
-    }
-
-    for stages in table.values_mut() {
-        for rows in stages.values_mut() {
-            rows.sort_by_key(Row::rank);
-
-            for i in 0..rows.len() - 1 {
-                let (head, tail) = rows.split_at_mut(i + 1);
-                if let Row::Unchanged { active, .. } = &mut head[i]
-                    && !matches!(tail[0], Row::Unchanged { .. })
-                {
-                    *active = true;
+            let mut add_row = |row| table.entry(rally.title.clone()).or_default().0.push(row);
+            let prev_full_times = prev_results.map(|r| split_times(r).0);
+            let prev_full_time = prev_full_times
+                .as_ref()
+                .and_then(|fts| fts.iter().find(|ft| ft.user_name == &driver.name));
+            let full_times = split_times(results).0;
+            let full_time = full_times.iter().find(|ft| ft.user_name == &driver.name);
+            match (prev_full_time, full_time) {
+                (None, None) => {}
+                (Some(_), None) => panic!("user disappeared?"),
+                (None, Some(ft)) => add_row(Row::FirstTime {
+                    rank: ft.total_local_rank,
+                    name: ft.user_name.to_string(),
+                    time: ft.total_time,
+                }),
+                (Some(prev_ft), Some(ft)) => {
+                    let rank = ft.total_local_rank;
+                    let name = ft.user_name.to_string();
+                    let time = ft.total_time;
+                    let prev = prev_ft.total_time;
+                    let time_increased = time < prev_ft.total_time;
+                    let rank_increased = rank < prev_ft.total_local_rank;
+                    let rank_same = rank == prev_ft.total_local_rank;
+                    let rank_decreased = rank > prev_ft.total_local_rank;
+                    if time_increased && rank_increased {
+                        add_row(Row::TimeImprovedRankIncreased {
+                            rank,
+                            name,
+                            time,
+                            prev,
+                        });
+                    } else if time_increased && rank_same {
+                        add_row(Row::TimeImproved {
+                            rank,
+                            name,
+                            time,
+                            prev,
+                        });
+                    } else if time_increased && rank_decreased {
+                        add_row(Row::TimeImprovedRankDecreased {
+                            rank,
+                            name,
+                            time,
+                            prev,
+                        });
+                    } else if rank_decreased {
+                        add_row(Row::RankDecreased { rank, name, time });
+                    } else {
+                        add_row(Row::Unchanged {
+                            active: false,
+                            rank,
+                            name,
+                            time,
+                        })
+                    }
                 }
             }
         }
     }
+
+    let sort_and_activate_rows = |rows: &mut Vec<Row>| {
+        rows.sort_by_key(Row::rank);
+
+        for i in 0..rows.len() - 1 {
+            let (head, tail) = rows.split_at_mut(i + 1);
+            if let Row::Unchanged { active, .. } = &mut head[i]
+                && !matches!(tail[0], Row::Unchanged { .. })
+            {
+                *active = true;
+            }
+        }
+    };
+    table
+        .values_mut()
+        .map(|(rally, _)| rally)
+        .for_each(sort_and_activate_rows);
+    table
+        .values_mut()
+        .flat_map(|(_, stages)| stages.values_mut())
+        .for_each(sort_and_activate_rows);
 
     let mut interval_parts =
         vec![html!(div { "interval time | " a href="/absolute.html" { "absolute time" }})];
